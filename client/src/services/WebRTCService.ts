@@ -172,13 +172,13 @@ export class WebRTCService {
             candidatePairStats = report;
             rttMs = report.currentRoundTripTime ? Math.round(report.currentRoundTripTime * 1000) : 0;
 
-            const reportMap = statsReport as unknown as Map<string, any>;
-            const localCandidate = reportMap.get(report.localCandidateId);
-            const remoteCandidate = reportMap.get(report.remoteCandidateId);
+            const anyReport = statsReport as any;
+            const localCandidate = typeof anyReport.get === 'function' ? anyReport.get(report.localCandidateId) : null;
+            const remoteCandidate = typeof anyReport.get === 'function' ? anyReport.get(report.remoteCandidateId) : null;
 
             if (localCandidate && remoteCandidate) {
-              const localType = localCandidate.candidateType;
-              const remoteType = remoteCandidate.candidateType;
+              const localType = (localCandidate as any).candidateType;
+              const remoteType = (remoteCandidate as any).candidateType;
 
               if (localType === 'relay' || remoteType === 'relay') {
                 connectionType = 'relayed';

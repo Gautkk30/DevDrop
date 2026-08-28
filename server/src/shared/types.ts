@@ -77,6 +77,7 @@ export type SignalingMessageType =
   | 'PONG';
 
 export interface SignalingMessage {
+  protocolVersion?: number;
   type: SignalingMessageType;
   roomId?: string;
   senderDeviceId?: string;

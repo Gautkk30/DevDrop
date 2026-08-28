@@ -187,6 +187,18 @@ export function App() {
       }
     });
 
+    const unsubTransferCancel = signalingClient.on('TRANSFER_CANCEL', (msg) => {
+      if (msg.payload?.transferId) {
+        const t = activeTransfersMap.current.get(msg.payload.transferId);
+        if (t) {
+          t.status = 'cancelled';
+          t.receivedChunks = [];
+          updateTransferState(t);
+          addToast('Transfer Cancelled', `Peer cancelled ${t.metadata.fileName}`, 'warning');
+        }
+      }
+    });
+
     const unsubExpired = signalingClient.on('ROOM_EXPIRED', () => {
       setRoom(null);
       setPeers([]);
@@ -208,6 +220,7 @@ export function App() {
       unsubIce();
       unsubTransferOffer();
       unsubTransferAccept();
+      unsubTransferCancel();
       unsubExpired();
     };
   }, [currentDevice, addToast]);
@@ -216,6 +229,7 @@ export function App() {
     return webrtcService.createPeerConnection(peerId, {
       onIceCandidate: (pId, candidate) => {
         signalingClient.send({
+          protocolVersion: 1,
           type: 'SIGNAL_ICE',
           targetDeviceId: pId,
           payload: { candidate },
@@ -223,6 +237,21 @@ export function App() {
       },
       onDataChannel: (pId, channel) => {
         setupDataChannelHandlers(pId, channel);
+      },
+      onConnectionStateChange: (pId, state) => {
+        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+          const activeList = Array.from(activeTransfersMap.current.values());
+          activeList.forEach((t) => {
+            if (
+              (t.metadata.senderDeviceId === pId || t.metadata.targetDeviceIds.includes(pId)) &&
+              (t.status === 'transferring' || t.status === 'offering')
+            ) {
+              t.status = 'failed';
+              t.error = `WebRTC transport connection ${state}`;
+              updateTransferState(t);
+            }
+          });
+        }
       },
       onStatsUpdate: (_, stats) => {
         setNetworkStats(stats);
@@ -261,43 +290,68 @@ export function App() {
 
     if (!targetTransfer) return;
 
-    if (!targetTransfer.receivedChunks) {
-      targetTransfer.receivedChunks = [];
-    }
-    targetTransfer.receivedChunks.push(chunk as any);
-    targetTransfer.bytesTransferred += chunk.byteLength;
-    targetTransfer.currentChunkIndex++;
+    try {
+      const rawArrayBuffer = (chunk.buffer as ArrayBuffer).slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
+      const { chunkIndex, totalChunks, payload } = TransferEngine.unframeChunk(rawArrayBuffer);
 
-    const now = Date.now();
-    const elapsedSec = (now - (targetTransfer.startTime || now)) / 1000;
-    const instantSpeed = elapsedSec > 0 ? targetTransfer.bytesTransferred / elapsedSec : 0;
-    targetTransfer.speedBytesPerSec = TransferEngine.smoothSpeed(targetTransfer.speedBytesPerSec, instantSpeed);
-    targetTransfer.averageSpeedBytesPerSec = instantSpeed;
+      if (!targetTransfer.receivedChunks) {
+        targetTransfer.receivedChunks = new Array(totalChunks);
+      }
 
-    const remainingBytes = targetTransfer.metadata.fileSize - targetTransfer.bytesTransferred;
-    targetTransfer.etaSeconds = targetTransfer.speedBytesPerSec > 0 ? remainingBytes / targetTransfer.speedBytesPerSec : 0;
-    targetTransfer.progressPercent = Math.min(100, Math.round((targetTransfer.bytesTransferred / targetTransfer.metadata.fileSize) * 100));
+      // Store chunk payload as Uint8Array / BlobPart
+      targetTransfer.receivedChunks[chunkIndex] = payload as unknown as BlobPart;
+      targetTransfer.bytesTransferred += payload.byteLength;
+      targetTransfer.currentChunkIndex = chunkIndex + 1;
 
-    if (targetTransfer.bytesTransferred >= targetTransfer.metadata.fileSize) {
-      targetTransfer.status = 'verifying';
-      updateTransferState(targetTransfer);
-      verifyCompletedTransfer(targetTransfer);
-    } else {
-      updateTransferState(targetTransfer);
+      const now = Date.now();
+      const elapsedSec = (now - (targetTransfer.startTime || now)) / 1000;
+      const instantSpeed = elapsedSec > 0 ? targetTransfer.bytesTransferred / elapsedSec : 0;
+      targetTransfer.speedBytesPerSec = TransferEngine.smoothSpeed(targetTransfer.speedBytesPerSec, instantSpeed);
+      targetTransfer.averageSpeedBytesPerSec = instantSpeed;
+
+      const remainingBytes = Math.max(0, targetTransfer.metadata.fileSize - targetTransfer.bytesTransferred);
+      targetTransfer.etaSeconds = targetTransfer.speedBytesPerSec > 0 ? remainingBytes / targetTransfer.speedBytesPerSec : 0;
+      targetTransfer.progressPercent = Math.min(100, Math.round((targetTransfer.bytesTransferred / targetTransfer.metadata.fileSize) * 100));
+
+      if (targetTransfer.bytesTransferred >= targetTransfer.metadata.fileSize || targetTransfer.currentChunkIndex >= totalChunks) {
+        targetTransfer.status = 'verifying';
+        updateTransferState(targetTransfer);
+        verifyCompletedTransfer(targetTransfer);
+      } else {
+        updateTransferState(targetTransfer);
+      }
+    } catch (err: any) {
+      console.error('[App] Chunk framing error:', err);
     }
   };
 
   const verifyCompletedTransfer = async (transfer: ActiveTransfer) => {
     if (!transfer.receivedChunks) return;
 
-    const blob = new Blob(transfer.receivedChunks as any, { type: transfer.metadata.fileType });
-    const buffer = await blob.arrayBuffer();
-    const computedHash = await TransferEngine.computeSha256(buffer);
+    try {
+      const blob = new Blob(transfer.receivedChunks, { type: transfer.metadata.fileType });
+      const buffer = await blob.arrayBuffer();
+      const computedHash = await TransferEngine.computeSha256(buffer);
 
-    transfer.verified = !transfer.metadata.sha256Checksum || computedHash === transfer.metadata.sha256Checksum;
-    transfer.status = 'completed';
-    updateTransferState(transfer);
-    addToast('Transfer Complete', `Received ${transfer.metadata.fileName} (${TransferEngine.formatBytes(transfer.metadata.fileSize)})`, 'success');
+      if (!transfer.metadata.sha256Checksum || computedHash === transfer.metadata.sha256Checksum) {
+        transfer.verified = true;
+        transfer.status = 'completed';
+        updateTransferState(transfer);
+        addToast('Transfer Complete', `Received ${transfer.metadata.fileName} (${TransferEngine.formatBytes(transfer.metadata.fileSize)})`, 'success');
+      } else {
+        transfer.verified = false;
+        transfer.status = 'failed';
+        transfer.error = 'SHA-256 integrity verification failed: file corrupted during peer-to-peer transmission';
+        updateTransferState(transfer);
+        addToast('Verification Failed', 'SHA-256 checksum mismatch — file integrity failed', 'error');
+      }
+    } catch (err: any) {
+      transfer.verified = false;
+      transfer.status = 'failed';
+      transfer.error = 'Failed to verify file integrity: ' + err.message;
+      updateTransferState(transfer);
+      addToast('Integrity Error', err.message, 'error');
+    }
   };
 
   const updateTransferState = (transfer: ActiveTransfer) => {
@@ -308,6 +362,7 @@ export function App() {
   const handleCreateRoom = (options: { deviceName: string; deviceType: any; password?: string; isOneTime: boolean }) => {
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
     signalingClient.send({
+      protocolVersion: 1,
       type: 'ROOM_CREATE',
       payload: {
         password: options.password,
@@ -324,6 +379,7 @@ export function App() {
   const handleJoinRoom = (options: { roomCode: string; deviceName: string; deviceType: any; password?: string }) => {
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
     signalingClient.send({
+      protocolVersion: 1,
       type: 'ROOM_JOIN',
       payload: {
         roomCode: options.roomCode,
@@ -344,8 +400,8 @@ export function App() {
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const isRisky = TransferEngine.isExecutableRisk(file.name);
 
-    const fileBuffer = await file.slice(0, 1024 * 1024).arrayBuffer();
-    const sha256Checksum = await TransferEngine.computeSha256(fileBuffer);
+    // Compute SHA-256 over the entire file
+    const sha256Checksum = await TransferEngine.computeFileSha256(file);
 
     const metadata: TransferMetadata = {
       transferId,
@@ -377,6 +433,7 @@ export function App() {
 
     targetDeviceIds.forEach((targetId) => {
       signalingClient.send({
+        protocolVersion: 1,
         type: 'TRANSFER_OFFER',
         targetDeviceId: targetId,
         payload: { metadata },
@@ -394,36 +451,42 @@ export function App() {
       averageSpeedBytesPerSec: 0,
       etaSeconds: 0,
       progressPercent: 0,
-      receivedChunks: [],
+      receivedChunks: new Array(metadata.totalChunks),
       startTime: Date.now(),
     };
 
     updateTransferState(newTransfer);
 
     signalingClient.send({
+      protocolVersion: 1,
       type: 'TRANSFER_ACCEPT',
       targetDeviceId: metadata.senderDeviceId,
       payload: { transferId: metadata.transferId },
     });
   };
 
-  const startSendingTransfer = (transferId: string) => {
+  const startSendingTransfer = (transferId: string, startChunkIndex: number = 0) => {
     const transfer = activeTransfersMap.current.get(transferId);
     if (!transfer || !transfer.file) return;
 
     transfer.status = 'transferring';
-    transfer.startTime = Date.now();
+    if (!transfer.startTime) transfer.startTime = Date.now();
     updateTransferState(transfer);
 
     const targetId = transfer.metadata.targetDeviceIds[0];
     const dataChannel = webrtcService.getDataChannel(targetId);
 
-    if (!dataChannel) return;
+    if (!dataChannel) {
+      transfer.status = 'failed';
+      transfer.error = 'WebRTC DataChannel not available for peer';
+      updateTransferState(transfer);
+      return;
+    }
 
     TransferEngine.sendFileChunks(
       transfer.file,
       dataChannel,
-      0,
+      startChunkIndex,
       (bytesTransferred, chunkIndex) => {
         transfer.bytesTransferred = bytesTransferred;
         transfer.currentChunkIndex = chunkIndex;
@@ -435,7 +498,7 @@ export function App() {
         transfer.speedBytesPerSec = TransferEngine.smoothSpeed(transfer.speedBytesPerSec, instantSpeed);
         transfer.averageSpeedBytesPerSec = instantSpeed;
 
-        const remainingBytes = transfer.metadata.fileSize - bytesTransferred;
+        const remainingBytes = Math.max(0, transfer.metadata.fileSize - bytesTransferred);
         transfer.etaSeconds = transfer.speedBytesPerSec > 0 ? remainingBytes / transfer.speedBytesPerSec : 0;
 
         updateTransferState(transfer);
@@ -470,7 +533,7 @@ export function App() {
       t.status = 'transferring';
       updateTransferState(t);
       if (t.file) {
-        startSendingTransfer(transferId);
+        startSendingTransfer(transferId, t.currentChunkIndex);
       }
     }
   };
@@ -479,7 +542,19 @@ export function App() {
     const t = activeTransfersMap.current.get(transferId);
     if (t) {
       t.status = 'cancelled';
+      t.receivedChunks = [];
       updateTransferState(t);
+
+      if (currentDevice && t.metadata.targetDeviceIds) {
+        t.metadata.targetDeviceIds.forEach((targetId) => {
+          signalingClient.send({
+            protocolVersion: 1,
+            type: 'TRANSFER_CANCEL',
+            targetDeviceId: targetId,
+            payload: { transferId: t.metadata.transferId },
+          });
+        });
+      }
     }
   };
 

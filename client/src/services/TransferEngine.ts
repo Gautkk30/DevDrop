@@ -32,6 +32,8 @@ export interface ActiveTransfer {
 }
 
 export class TransferEngine {
+  public static readonly HEADER_SIZE = 8; // 4 bytes chunkIndex + 4 bytes totalChunks
+
   public static isExecutableRisk(fileName: string): boolean {
     const ext = fileName.split('.').pop()?.toLowerCase();
     const riskyExts = ['exe', 'bat', 'cmd', 'sh', 'apk', 'msi', 'vbs', 'scr', 'ps1', 'jar', 'app'];
@@ -42,6 +44,31 @@ export class TransferEngine {
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  public static async computeFileSha256(file: File): Promise<string> {
+    const buffer = await file.arrayBuffer();
+    return this.computeSha256(buffer);
+  }
+
+  public static frameChunk(chunkIndex: number, totalChunks: number, payload: ArrayBuffer): ArrayBuffer {
+    const framed = new Uint8Array(this.HEADER_SIZE + payload.byteLength);
+    const view = new DataView(framed.buffer);
+    view.setUint32(0, chunkIndex, false); // Big-endian
+    view.setUint32(4, totalChunks, false);
+    framed.set(new Uint8Array(payload), this.HEADER_SIZE);
+    return framed.buffer;
+  }
+
+  public static unframeChunk(framedData: ArrayBuffer): { chunkIndex: number; totalChunks: number; payload: Uint8Array } {
+    if (framedData.byteLength < this.HEADER_SIZE) {
+      throw new Error(`Framed chunk size ${framedData.byteLength} is smaller than header size ${this.HEADER_SIZE}`);
+    }
+    const view = new DataView(framedData);
+    const chunkIndex = view.getUint32(0, false);
+    const totalChunks = view.getUint32(4, false);
+    const payload = new Uint8Array(framedData, this.HEADER_SIZE);
+    return { chunkIndex, totalChunks, payload };
   }
 
   public static formatBytes(bytes: number, decimals: number = 2): string {
@@ -94,10 +121,12 @@ export class TransferEngine {
 
     const readAndSendNextChunk = () => {
       if (isCancelledOrPaused()) {
+        dataChannel.onbufferedamountlow = null;
         return;
       }
 
       if (currentChunk >= totalChunks) {
+        dataChannel.onbufferedamountlow = null;
         onComplete();
         return;
       }
@@ -116,20 +145,30 @@ export class TransferEngine {
 
       const reader = new FileReader();
       reader.onload = (e) => {
-        if (isCancelledOrPaused()) return;
+        if (isCancelledOrPaused()) {
+          dataChannel.onbufferedamountlow = null;
+          return;
+        }
+
         if (e.target?.result && dataChannel.readyState === 'open') {
           try {
-            dataChannel.send(e.target.result as ArrayBuffer);
+            const rawPayload = e.target.result as ArrayBuffer;
+            const framedData = TransferEngine.frameChunk(currentChunk, totalChunks, rawPayload);
+            dataChannel.send(framedData);
             currentChunk++;
             onProgress(end, currentChunk);
 
             setTimeout(readAndSendNextChunk, 0);
           } catch (err: any) {
+            dataChannel.onbufferedamountlow = null;
             onError(err);
           }
         }
       };
-      reader.onerror = () => onError(new Error('FileReader read failed'));
+      reader.onerror = () => {
+        dataChannel.onbufferedamountlow = null;
+        onError(new Error('FileReader read failed'));
+      };
       reader.readAsArrayBuffer(slice);
     };
 
