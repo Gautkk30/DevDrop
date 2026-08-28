@@ -1,8 +1,10 @@
-const CACHE_NAME = 'devdrop-app-shell-v1';
+const CACHE_NAME = 'devdrop-app-shell-v2';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/favicon.png',
+  '/brand-logo.png',
 ];
 
 self.addEventListener('install', (event) => {

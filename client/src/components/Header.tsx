@@ -1,6 +1,7 @@
 import React from 'react';
 import { Activity, Download, QrCode } from 'lucide-react';
 import type { RoomMetadata } from '../shared/types.js';
+import brandLogo from '../assets/brand-logo.png';
 
 interface HeaderProps {
   room?: RoomMetadata | null;
@@ -26,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
           className="flex items-center gap-2.5 cursor-pointer group"
           onClick={() => (window.location.href = '/')}
         >
-          <img src="/brand-logo.png" alt="DevDrop" className="h-7 sm:h-8 w-auto object-contain" />
+          <img src={brandLogo} alt="DevDrop" className="h-7 sm:h-8 w-auto object-contain" />
           <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-sm bg-canvas-dark text-ink-secondary">
             P2P
           </span>
