@@ -32,10 +32,14 @@ server.listen(PORT, () => {
   console.log(`=======================================================`);
 });
 
-process.on('SIGTERM', () => {
+const handleShutdown = () => {
   console.log('[Server] Gracefully shutting down...');
   roomManager.destroy();
   server.close(() => {
     process.exit(0);
   });
-});
+};
+
+process.on('SIGTERM', handleShutdown);
+process.on('SIGINT', handleShutdown);
+
