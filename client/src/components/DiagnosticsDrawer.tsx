@@ -112,9 +112,11 @@ export const DiagnosticsDrawer: React.FC<DiagnosticsDrawerProps> = ({
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-ink-muted">ICE Local Candidate:</span>
-                  <span className="text-ink truncate max-w-[180px]">
-                    {networkStats?.candidatePair?.localType || 'host'}
+                  <span className="text-ink-muted">ICE Route:</span>
+                  <span className="text-ink font-semibold truncate max-w-[180px]">
+                    {networkStats?.candidatePair
+                      ? `${networkStats.candidatePair.localType} ↔ ${networkStats.candidatePair.remoteType}`
+                      : 'host ↔ host (Direct)'}
                   </span>
                 </div>
               </div>

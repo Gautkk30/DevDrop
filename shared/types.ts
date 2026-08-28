@@ -4,6 +4,7 @@ export interface DeviceInfo {
   id: string;
   name: string;
   type: DeviceType;
+  platformDescription?: string;
   joinedAt: number;
   isHost?: boolean;
 }

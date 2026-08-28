@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { LogIn, X, Lock, QrCode } from 'lucide-react';
 import type { DeviceType } from '../shared/types.js';
+import { DeviceIdentifier } from '../services/DeviceIdentifier.js';
 
 interface JoinRoomModalProps {
   isOpen: boolean;
   initialCode?: string;
   onClose: () => void;
-  onJoin: (options: { roomCode: string; deviceName: string; deviceType: DeviceType; password?: string }) => void;
+  onJoin: (options: { roomCode: string; deviceName: string; deviceType: DeviceType; platformDescription?: string; password?: string }) => void;
   onOpenScanner: () => void;
 }
 
@@ -18,10 +19,7 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
   onOpenScanner,
 }) => {
   const [roomCode, setRoomCode] = useState(initialCode);
-  const [deviceName, setDeviceName] = useState(() => {
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    return isMobile ? 'Mobile Phone' : 'Laptop';
-  });
+  const [deviceName, setDeviceName] = useState(() => DeviceIdentifier.getDefaultDeviceName());
   const [deviceType] = useState<DeviceType>(() => {
     return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop';
   });
@@ -76,6 +74,7 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
       roomCode: roomCode.trim().toUpperCase(),
       deviceName: deviceName.trim(),
       deviceType,
+      platformDescription: DeviceIdentifier.getDeviceDescription(),
       password: requiresPassword && password ? password : undefined,
     });
   };

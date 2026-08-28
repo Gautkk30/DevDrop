@@ -1,18 +1,16 @@
 import React, { useState } from 'react';
 import { Lock, X, Smartphone, Laptop, Plus } from 'lucide-react';
 import type { DeviceType } from '../shared/types.js';
+import { DeviceIdentifier } from '../services/DeviceIdentifier.js';
 
 interface CreateRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (options: { deviceName: string; deviceType: DeviceType; password?: string; isOneTime: boolean }) => void;
+  onCreate: (options: { deviceName: string; deviceType: DeviceType; platformDescription?: string; password?: string; isOneTime: boolean }) => void;
 }
 
 export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({ isOpen, onClose, onCreate }) => {
-  const [deviceName, setDeviceName] = useState(() => {
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    return isMobile ? 'Mobile Device' : 'My Computer';
-  });
+  const [deviceName, setDeviceName] = useState(() => DeviceIdentifier.getDefaultDeviceName());
   const [deviceType, setDeviceType] = useState<DeviceType>(() => {
     return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop';
   });
@@ -29,6 +27,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({ isOpen, onClos
     onCreate({
       deviceName: deviceName.trim(),
       deviceType,
+      platformDescription: DeviceIdentifier.getDeviceDescription(),
       password: enablePassword && password.trim() ? password.trim() : undefined,
       isOneTime,
     });

@@ -129,6 +129,18 @@ export function App() {
     };
   }, [room, peers, currentDevice]);
 
+  // Deep Link Routing (/join/:roomCode)
+  useEffect(() => {
+    const path = window.location.pathname;
+    const match = path.match(/^\/join\/([A-Za-z0-9_-]+)/i);
+    if (match && match[1]) {
+      const code = match[1].toUpperCase();
+      setJoinInitialCode(code);
+      setIsJoinOpen(true);
+      window.history.replaceState({}, document.title, '/');
+    }
+  }, []);
+
   // Global Keyboard Shortcuts (Ctrl/Cmd + K for Command Palette, Escape for Modals)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -474,7 +486,7 @@ export function App() {
     setTransfers(Array.from(activeTransfersMap.current.values()));
   };
 
-  const handleCreateRoom = (options: { deviceName: string; deviceType: any; password?: string; isOneTime: boolean }) => {
+  const handleCreateRoom = (options: { deviceName: string; deviceType: any; platformDescription?: string; password?: string; isOneTime: boolean }) => {
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
     signalingClient.send({
       protocolVersion: 1,
@@ -486,12 +498,13 @@ export function App() {
           id: deviceId,
           name: options.deviceName,
           type: options.deviceType,
+          platformDescription: options.platformDescription,
         },
       },
     });
   };
 
-  const handleJoinRoom = (options: { roomCode: string; deviceName: string; deviceType: any; password?: string }) => {
+  const handleJoinRoom = (options: { roomCode: string; deviceName: string; deviceType: any; platformDescription?: string; password?: string }) => {
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
     signalingClient.send({
       protocolVersion: 1,
@@ -503,6 +516,7 @@ export function App() {
           id: deviceId,
           name: options.deviceName,
           type: options.deviceType,
+          platformDescription: options.platformDescription,
         },
       },
     });
@@ -874,6 +888,7 @@ export function App() {
               currentDevice={currentDevice}
               peers={peers}
               transfers={transfers}
+              networkStats={networkStats}
               speedSamples={speedSamples}
               queueLength={fileQueue.length}
               onSendFile={handleSendFile}

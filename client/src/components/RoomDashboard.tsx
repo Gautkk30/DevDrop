@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   Copy,
@@ -20,8 +20,9 @@ import {
   LogOut,
   History,
   Files,
+  AlertTriangle,
 } from 'lucide-react';
-import type { DeviceInfo, RoomMetadata, TransferSpeedSample } from '../shared/types.js';
+import type { DeviceInfo, RoomMetadata, TransferSpeedSample, NetworkStats } from '../shared/types.js';
 import type { ActiveTransfer } from '../services/TransferEngine.js';
 import { TransferEngine } from '../services/TransferEngine.js';
 import { SpeedGraph } from './SpeedGraph.tsx';
@@ -31,6 +32,7 @@ interface RoomDashboardProps {
   currentDevice: DeviceInfo;
   peers: DeviceInfo[];
   transfers: ActiveTransfer[];
+  networkStats?: NetworkStats | null;
   speedSamples?: TransferSpeedSample[];
   queueLength?: number;
   onSendFile: (file: File, targetDeviceIds: string[]) => void;
@@ -53,6 +55,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
   currentDevice,
   peers,
   transfers,
+  networkStats,
   speedSamples = [],
   queueLength = 0,
   onSendFile,
@@ -73,6 +76,18 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
   const [showQr, setShowQr] = useState(false);
   const [selectedTargetDeviceId, setSelectedTargetDeviceId] = useState<string>('ALL');
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  const [remainingSec, setRemainingSec] = useState(() =>
+    Math.max(0, Math.floor((room.expiresAt - Date.now()) / 1000))
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const sec = Math.max(0, Math.floor((room.expiresAt - Date.now()) / 1000));
+      setRemainingSec(sec);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [room.expiresAt]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -105,6 +120,12 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
     setCopiedLink(true);
     onNotify?.('Link Copied', 'Direct join link copied to clipboard', 'success');
     setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const formatCountdown = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -142,8 +163,6 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
       fileList.forEach((file) => onSendFile(file, targets));
     }
   };
-
-  const remainingMinutes = Math.max(0, Math.ceil((room.expiresAt - Date.now()) / 60000));
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-5 animate-fade-in pb-16 px-4 sm:px-6">
@@ -194,9 +213,18 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
               </div>
             </div>
 
-            <p className="text-xs text-ink-muted font-mono flex items-center gap-1.5 pt-0.5">
-              <Clock className="w-3.5 h-3.5 text-ink-muted" />
-              <span>Expires in ~{remainingMinutes}m · In-memory ephemeral</span>
+            <p className="text-xs text-ink-muted font-mono flex items-center gap-1.5 pt-0.5 tabular-nums">
+              <Clock className="w-3.5 h-3.5 text-ink-muted shrink-0" />
+              {remainingSec === 0 ? (
+                <span className="text-rose-700 font-medium">Session Expired</span>
+              ) : remainingSec < 120 ? (
+                <span className="text-amber-800 font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+                  Expires in {formatCountdown(remainingSec)} (soon)
+                </span>
+              ) : (
+                <span>Expires in {formatCountdown(remainingSec)} · In-memory ephemeral</span>
+              )}
             </p>
           </div>
 
@@ -254,10 +282,34 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
             </h2>
           </div>
           {otherPeers.length > 0 && (
-            <span className="text-xs font-mono text-emerald-800 flex items-center gap-1.5 font-medium animate-fade-in">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-              Ready for direct transfer
-            </span>
+            <div className="flex items-center gap-2 text-xs font-mono animate-fade-in">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  networkStats?.rating === 'excellent'
+                    ? 'bg-emerald-600'
+                    : networkStats?.rating === 'good'
+                    ? 'bg-emerald-500'
+                    : networkStats?.rating === 'fair'
+                    ? 'bg-amber-500'
+                    : networkStats?.rating === 'poor'
+                    ? 'bg-rose-500'
+                    : 'bg-emerald-600'
+                }`}
+              />
+              <span className="text-ink font-medium capitalize">
+                {networkStats?.rating || 'Excellent'}
+              </span>
+              <span className="text-ink-muted">·</span>
+              <span className="text-ink-secondary">
+                {networkStats?.connectionType === 'direct-local'
+                  ? 'Direct Wi-Fi / LAN'
+                  : networkStats?.connectionType === 'direct-internet'
+                  ? 'Direct P2P'
+                  : networkStats?.connectionType === 'relayed'
+                  ? 'Relay'
+                  : 'Direct P2P'}
+              </span>
+            </div>
           )}
         </div>
 
@@ -280,11 +332,11 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                     : 'bg-surface border-border hover:border-ink/20 shadow-subtle'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-7 h-7 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border shrink-0">
                     {peer.type === 'mobile' ? <Smartphone className="w-3.5 h-3.5 text-ink-secondary" /> : <Laptop className="w-3.5 h-3.5 text-ink-secondary" />}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-bold text-ink truncate max-w-[120px] font-sans">{peer.name}</span>
                       {peer.id === currentDevice.id && (
@@ -294,12 +346,16 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                         <span className="text-[9px] px-1 py-0.2 rounded-sm bg-canvas-dark text-ink-muted font-mono font-medium">HOST</span>
                       )}
                     </div>
-                    <span className="text-[10px] text-emerald-800 font-mono flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                      Direct P2P
-                    </span>
+                    <div className="flex items-center gap-1.5 text-[10px] text-ink-muted font-mono truncate">
+                      <span>{peer.platformDescription || (peer.type === 'mobile' ? 'Mobile' : 'Desktop')}</span>
+                    </div>
                   </div>
                 </div>
+
+                <span className="text-[10px] text-emerald-800 font-mono flex items-center gap-1 shrink-0 ml-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                  {networkStats?.connectionType === 'relayed' ? 'Relay' : 'Direct'}
+                </span>
               </div>
             ))}
           </div>

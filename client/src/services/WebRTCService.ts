@@ -153,6 +153,8 @@ export class WebRTCService {
     let lastBytesReceived = 0;
     let lastTime = Date.now();
 
+    const ratingHistory: QualityRating[] = [];
+
     const interval = setInterval(async () => {
       const pc = this.peerConnections.get(peerId);
       if (!pc || pc.connectionState !== 'connected') {
@@ -164,21 +166,24 @@ export class WebRTCService {
         const statsReport = await pc.getStats();
         let connectionType: ConnectionType = 'unknown';
         let rttMs = 0;
-        let candidatePairStats: any = null;
+        let localCandidateStats: any = null;
+        let remoteCandidateStats: any = null;
         let totalBytesTransferred = 0;
 
         statsReport.forEach((report) => {
-          if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
-            candidatePairStats = report;
+          if (report.type === 'candidate-pair' && report.state === 'succeeded' && (report.nominated || !localCandidateStats)) {
             rttMs = report.currentRoundTripTime ? Math.round(report.currentRoundTripTime * 1000) : 0;
 
             const anyReport = statsReport as any;
-            const localCandidate = typeof anyReport.get === 'function' ? anyReport.get(report.localCandidateId) : null;
-            const remoteCandidate = typeof anyReport.get === 'function' ? anyReport.get(report.remoteCandidateId) : null;
+            const local = typeof anyReport.get === 'function' ? anyReport.get(report.localCandidateId) : null;
+            const remote = typeof anyReport.get === 'function' ? anyReport.get(report.remoteCandidateId) : null;
 
-            if (localCandidate && remoteCandidate) {
-              const localType = (localCandidate as any).candidateType;
-              const remoteType = (remoteCandidate as any).candidateType;
+            if (local) localCandidateStats = local;
+            if (remote) remoteCandidateStats = remote;
+
+            if (local && remote) {
+              const localType = (local as any).candidateType;
+              const remoteType = (remote as any).candidateType;
 
               if (localType === 'relay' || remoteType === 'relay') {
                 connectionType = 'relayed';
@@ -205,7 +210,12 @@ export class WebRTCService {
         const channel = this.dataChannels.get(peerId);
         const bufferedAmount = channel ? channel.bufferedAmount : 0;
 
-        const rating = this.calculateRating(rttMs, connectionType);
+        const instantRating = this.calculateRating(rttMs, connectionType);
+        ratingHistory.push(instantRating);
+        if (ratingHistory.length > 3) ratingHistory.shift();
+
+        // Smoothed rating (majority vote in 3-sample window)
+        const smoothedRating = this.smoothRating(ratingHistory);
 
         const stats: NetworkStats = {
           rttMs,
@@ -213,11 +223,13 @@ export class WebRTCService {
           averageThroughputBytesPerSec: Math.max(0, currentThroughput),
           bufferedAmountBytes: bufferedAmount,
           connectionType,
-          rating,
-          candidatePair: candidatePairStats
+          rating: smoothedRating,
+          candidatePair: localCandidateStats && remoteCandidateStats
             ? {
-                localType: candidatePairStats.localCandidateId || 'unknown',
-                remoteType: candidatePairStats.remoteCandidateId || 'unknown',
+                localType: (localCandidateStats as any).candidateType || 'host',
+                remoteType: (remoteCandidateStats as any).candidateType || 'host',
+                localAddress: (localCandidateStats as any).address || (localCandidateStats as any).ip,
+                remoteAddress: (remoteCandidateStats as any).address || (remoteCandidateStats as any).ip,
               }
             : undefined,
         };
@@ -243,11 +255,30 @@ export class WebRTCService {
 
   private calculateRating(rttMs: number, type: ConnectionType): QualityRating {
     if (type === 'unknown') return 'poor';
-    if (rttMs <= 30 && type === 'direct-local') return 'excellent';
-    if (rttMs <= 80) return 'good';
-    if (rttMs <= 200) return 'fair';
+    if (rttMs <= 40 && type === 'direct-local') return 'excellent';
+    if (rttMs <= 100) return 'good';
+    if (rttMs <= 250) return 'fair';
     return 'poor';
+  }
+
+  private smoothRating(history: QualityRating[]): QualityRating {
+    if (history.length === 0) return 'good';
+    const counts: Record<string, number> = {};
+    history.forEach((r) => {
+      counts[r] = (counts[r] || 0) + 1;
+    });
+
+    let bestRating: QualityRating = history[history.length - 1];
+    let maxCount = 0;
+    for (const [r, count] of Object.entries(counts)) {
+      if (count > maxCount) {
+        maxCount = count;
+        bestRating = r as QualityRating;
+      }
+    }
+    return bestRating;
   }
 }
 
 export const webrtcService = new WebRTCService();
+
