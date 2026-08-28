@@ -8,43 +8,42 @@ interface LandingViewProps {
 
 export const LandingView: React.FC<LandingViewProps> = ({ onOpenCreate, onOpenJoin }) => {
   return (
-    <div className="w-full max-w-5xl mx-auto space-y-16 py-12 sm:py-16 px-4 animate-fade-in">
+    <div className="w-full max-w-4xl mx-auto space-y-12 py-10 sm:py-16 px-4 animate-fade-in">
       {/* Hero Section */}
-      <div className="text-center space-y-6 max-w-3xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-canvas-dark border border-border text-ink text-xs font-mono">
+      <div className="text-center space-y-5 max-w-2xl mx-auto">
+        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-subtle bg-canvas-dark border border-border text-ink-secondary text-xs font-mono">
           <span className="w-1.5 h-1.5 rounded-full bg-accent" />
-          <span>WebRTC P2P DataChannel Architecture</span>
+          <span>Peer-to-Peer WebRTC DataChannels</span>
         </div>
 
         <div className="space-y-3">
-          <h1 className="text-4xl sm:text-6xl font-extrabold text-ink font-sans tracking-tight leading-[1.08]">
-            DEVICES. <br />
-            CONNECTED.
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-ink font-sans tracking-tight leading-[1.15]">
+            Direct, private file transfer <br className="hidden sm:block" />
+            between your devices.
           </h1>
-          <p className="text-base sm:text-lg text-ink-secondary font-sans max-w-xl mx-auto font-normal leading-relaxed">
-            Transfer files directly between your devices. <br className="hidden sm:block" />
-            No account. No cables. No permanent cloud storage.
+          <p className="text-sm sm:text-base text-ink-secondary font-sans max-w-lg mx-auto font-normal leading-relaxed">
+            Stream files directly over your local network and WebRTC DataChannels. No account creation, no file size limits, zero cloud storage.
           </p>
         </div>
 
-        {/* Minimal Connected Device Illustration */}
-        <div className="py-4 flex items-center justify-center">
-          <div className="bg-surface px-6 py-4 rounded-card border border-border shadow-subtle flex items-center gap-4 sm:gap-8">
+        {/* Minimal Connected Device Schematic */}
+        <div className="py-2 flex items-center justify-center">
+          <div className="bg-surface px-5 py-3 rounded-card border border-border shadow-subtle flex items-center gap-3 sm:gap-6">
             <div className="flex items-center gap-2 text-ink">
-              <Laptop className="w-5 h-5 text-ink-secondary" />
+              <Laptop className="w-4 h-4 text-ink-secondary stroke-[1.75]" />
               <span className="text-xs font-mono font-medium">Laptop</span>
             </div>
 
             <div className="flex items-center gap-1.5 text-accent font-mono text-[11px]">
-              <span className="h-[1px] w-6 sm:w-12 bg-border-strong" />
-              <span className="px-2 py-0.5 rounded-full bg-canvas-subtle border border-border text-ink-muted text-[10px]">
+              <span className="h-[1px] w-5 sm:w-10 bg-border-strong" />
+              <span className="px-2 py-0.5 rounded-subtle bg-canvas-subtle border border-border text-ink-muted text-[10px]">
                 Direct P2P
               </span>
-              <span className="h-[1px] w-6 sm:w-12 bg-border-strong" />
+              <span className="h-[1px] w-5 sm:w-10 bg-border-strong" />
             </div>
 
             <div className="flex items-center gap-2 text-ink">
-              <Smartphone className="w-5 h-5 text-ink-secondary" />
+              <Smartphone className="w-4 h-4 text-ink-secondary stroke-[1.75]" />
               <span className="text-xs font-mono font-medium">Phone</span>
             </div>
           </div>
@@ -54,49 +53,49 @@ export const LandingView: React.FC<LandingViewProps> = ({ onOpenCreate, onOpenJo
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
           <button
             onClick={onOpenCreate}
-            className="w-full sm:w-auto px-6 py-3.5 rounded-subtle bg-ink hover:bg-ink/90 text-surface font-medium text-sm transition-all flex items-center justify-center gap-2 shadow-subtle group btn-press"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-subtle bg-ink hover:bg-ink/90 text-surface font-medium text-sm transition-all flex items-center justify-center gap-2 shadow-subtle group btn-press"
           >
-            <span>Start Transferring</span>
+            <span>Create Transfer Room</span>
             <ArrowRight className="w-4 h-4 text-surface/70 group-hover:translate-x-0.5 transition-transform duration-150" />
           </button>
           <button
             onClick={onOpenJoin}
-            className="w-full sm:w-auto px-6 py-3.5 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-ink font-medium text-sm transition-all flex items-center justify-center gap-2 shadow-subtle btn-press"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-ink font-medium text-sm transition-all flex items-center justify-center gap-2 shadow-subtle btn-press"
           >
-            <span>Join with Room Code</span>
+            <span>Join with Code</span>
           </button>
         </div>
       </div>
 
-      {/* 3 Core Architecture Pillars */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-4">
-        <div className="surface-card p-6 space-y-3">
-          <div className="w-9 h-9 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
-            <Zap className="w-4 h-4 text-accent" />
+      {/* 3 Architecture Pillars */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+        <div className="surface-card p-5 space-y-2.5">
+          <div className="w-8 h-8 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
+            <Zap className="w-3.5 h-3.5 text-accent" />
           </div>
-          <h3 className="text-sm font-semibold text-ink font-sans">Pure WebRTC DataChannels</h3>
+          <h2 className="text-sm font-semibold text-ink font-sans">Direct DataChannels</h2>
           <p className="text-xs text-ink-secondary leading-relaxed font-sans">
-            Transfers stream peer-to-peer over high-speed DataChannels. Automatically uses local network routes when devices share Wi-Fi.
+            Files stream directly peer-to-peer over WebRTC. Automatically leverages high-speed local LAN paths when devices share the same Wi-Fi.
           </p>
         </div>
 
-        <div className="surface-card p-6 space-y-3">
-          <div className="w-9 h-9 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
-            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+        <div className="surface-card p-5 space-y-2.5">
+          <div className="w-8 h-8 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
           </div>
-          <h3 className="text-sm font-semibold text-ink font-sans">Zero Cloud Storage</h3>
+          <h2 className="text-sm font-semibold text-ink font-sans">Zero Cloud Storage</h2>
           <p className="text-xs text-ink-secondary leading-relaxed font-sans">
-            File contents never touch a server disk or database. Transfers verify with SHA-256 Web Crypto checksums upon assembly.
+            Binary payloads never touch a server disk or database. Every completed transfer is cryptographically verified with SHA-256 Web Crypto.
           </p>
         </div>
 
-        <div className="surface-card p-6 space-y-3">
-          <div className="w-9 h-9 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
-            <KeyRound className="w-4 h-4 text-brand-slate" />
+        <div className="surface-card p-5 space-y-2.5">
+          <div className="w-8 h-8 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
+            <KeyRound className="w-3.5 h-3.5 text-brand-slate" />
           </div>
-          <h3 className="text-sm font-semibold text-ink font-sans">Ephemeral Rooms</h3>
+          <h2 className="text-sm font-semibold text-ink font-sans">Ephemeral Sessions</h2>
           <p className="text-xs text-ink-secondary leading-relaxed font-sans">
-            Sessions expire automatically with zero trace. Pair effortlessly via QR codes, direct URLs, or optional room passwords.
+            Rooms expire and wipe from server memory automatically. Connect instantly via camera QR scan, direct URLs, or optional passwords.
           </p>
         </div>
       </div>

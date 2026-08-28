@@ -52,15 +52,15 @@ export default {
       },
       borderRadius: {
         'subtle': '6px',
-        'card': '12px',
-        'modal': '16px',
+        'card': '10px',
+        'modal': '12px',
       },
       animation: {
-        'fade-in': 'fadeIn 0.18s ease-out forwards',
-        'slide-up': 'slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-        'qr-reveal': 'qrReveal 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-        'check-settle': 'checkSettle 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-        'device-connect': 'deviceConnect 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+        'fade-in': 'fadeIn 0.14s ease-out forwards',
+        'slide-up': 'slideUp 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+        'qr-reveal': 'qrReveal 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+        'check-settle': 'checkSettle 0.20s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+        'device-connect': 'deviceConnect 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards',
       },
       keyframes: {
         fadeIn: {
@@ -68,20 +68,19 @@ export default {
           '100%': { opacity: '1' },
         },
         slideUp: {
-          '0%': { opacity: '0', transform: 'translateY(6px)' },
+          '0%': { opacity: '0', transform: 'translateY(4px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         qrReveal: {
-          '0%': { opacity: '0', transform: 'scale(0.96)' },
+          '0%': { opacity: '0', transform: 'scale(0.97)' },
           '100%': { opacity: '1', transform: 'scale(1)' },
         },
         checkSettle: {
-          '0%': { opacity: '0', transform: 'scale(0.85)' },
-          '70%': { transform: 'scale(1.04)' },
+          '0%': { opacity: '0', transform: 'scale(0.9)' },
           '100%': { opacity: '1', transform: 'scale(1)' },
         },
         deviceConnect: {
-          '0%': { opacity: '0', transform: 'translateX(-4px)' },
+          '0%': { opacity: '0', transform: 'translateX(-3px)' },
           '100%': { opacity: '1', transform: 'translateX(0)' },
         }
       }

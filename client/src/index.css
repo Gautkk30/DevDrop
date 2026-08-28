@@ -52,12 +52,12 @@
 }
 
 .modal-scrim {
-  @apply fixed inset-0 bg-[#18181B]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in;
+  @apply fixed inset-0 bg-[#18181B]/35 backdrop-blur-[2px] z-50 flex items-center justify-center p-4 animate-fade-in;
 }
 
 /* Tactile button microinteraction */
 .btn-press {
-  @apply active:scale-[0.975] transition-transform duration-100 ease-out;
+  @apply active:scale-[0.98] transition-transform duration-100 ease-out;
 }
 
 /* Reduced motion support */

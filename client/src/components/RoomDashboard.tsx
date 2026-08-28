@@ -135,64 +135,64 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
   const remainingMinutes = Math.max(0, Math.ceil((room.expiresAt - Date.now()) / 60000));
 
   return (
-    <div className="w-full max-w-5xl mx-auto space-y-6 animate-fade-in pb-16 px-4 sm:px-6">
+    <div className="w-full max-w-5xl mx-auto space-y-5 animate-fade-in pb-16 px-4 sm:px-6">
       {/* Signature Room Ready Banner */}
-      <div className="surface-card p-6 sm:p-7 relative overflow-hidden">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-1.5">
+      <div className="surface-card p-5 sm:p-6 relative overflow-hidden">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-mono font-medium uppercase tracking-wider text-ink-muted">
-                Your Room is Ready
+                Transfer Room
               </span>
               {room.isOneTime && (
                 <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-subtle bg-amber-50 text-amber-900 border border-amber-200">
-                  One-Time Room
+                  One-Time
                 </span>
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-3.5 pt-0.5">
-              <h1 className="text-3xl sm:text-4xl font-extrabold text-ink font-mono tracking-wider">
+            <div className="flex flex-wrap items-center gap-3 pt-0.5">
+              <h1 className="text-2xl sm:text-3xl font-bold text-ink font-mono tracking-wider">
                 {room.code}
               </h1>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={handleCopyCode}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-xs font-mono text-ink-secondary hover:text-ink transition-all shadow-subtle btn-press"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-xs font-mono text-ink-secondary hover:text-ink transition-all shadow-subtle btn-press"
                 >
                   {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600 animate-check-settle" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copiedCode ? 'Copied' : 'Copy code'}</span>
                 </button>
                 <button
                   onClick={handleCopyLink}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-xs font-mono text-ink-secondary hover:text-ink transition-all shadow-subtle btn-press"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-xs font-mono text-ink-secondary hover:text-ink transition-all shadow-subtle btn-press"
                 >
                   {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600 animate-check-settle" /> : <Share2 className="w-3.5 h-3.5" />}
                   <span>{copiedLink ? 'Copied' : 'Share link'}</span>
                 </button>
                 <button
                   onClick={() => setShowQr(!showQr)}
-                  className={`p-2 rounded-subtle border transition-all shadow-subtle btn-press ${
+                  className={`p-1.5 rounded-subtle border transition-all shadow-subtle btn-press ${
                     showQr ? 'bg-ink text-surface border-ink' : 'bg-surface hover:bg-canvas-subtle border-border text-ink-secondary hover:text-ink'
                   }`}
                   title="Toggle QR Code"
                 >
-                  <QrCode className="w-4 h-4" />
+                  <QrCode className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
 
-            <p className="text-xs text-ink-muted font-mono flex items-center gap-1.5 pt-1">
+            <p className="text-xs text-ink-muted font-mono flex items-center gap-1.5 pt-0.5">
               <Clock className="w-3.5 h-3.5 text-ink-muted" />
-              <span>Room expires in ~{remainingMinutes} minutes</span>
+              <span>Expires in ~{remainingMinutes}m · In-memory ephemeral</span>
             </p>
           </div>
 
           <div>
             <button
               onClick={onLeaveRoom}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-subtle bg-surface hover:bg-rose-50 border border-border hover:border-rose-200 text-xs font-sans font-medium text-ink-muted hover:text-rose-700 transition-all shadow-subtle btn-press"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-subtle bg-surface hover:bg-rose-50 border border-border hover:border-rose-200 text-xs font-sans font-medium text-ink-muted hover:text-rose-700 transition-all shadow-subtle btn-press"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Leave Room</span>
@@ -201,14 +201,14 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
         </div>
 
         {showQr && (
-          <div className="mt-6 pt-6 border-t border-border flex flex-col sm:flex-row items-center gap-6 animate-qr-reveal">
-            <div className="p-3 bg-surface rounded-card border border-border shadow-subtle">
-              <QRCodeSVG value={shareUrl} size={140} level="H" includeMargin={true} />
+          <div className="mt-5 pt-5 border-t border-border flex flex-col sm:flex-row items-center gap-5 animate-qr-reveal">
+            <div className="p-2.5 bg-surface rounded-card border border-border shadow-subtle">
+              <QRCodeSVG value={shareUrl} size={130} level="H" includeMargin={true} />
             </div>
-            <div className="text-center sm:text-left space-y-1.5">
-              <h2 className="text-sm font-bold text-ink font-sans">Scan with another device</h2>
+            <div className="text-center sm:text-left space-y-1">
+              <h2 className="text-xs font-bold text-ink font-sans">Pair via Camera</h2>
               <p className="text-xs text-ink-secondary max-w-sm leading-relaxed font-sans">
-                Point your phone or tablet camera at the QR code to connect directly to room <span className="text-ink font-mono font-bold">{room.code}</span>.
+                Point another device's camera at this QR code to join room <span className="text-ink font-mono font-bold">{room.code}</span> instantly.
               </p>
             </div>
           </div>
@@ -216,16 +216,16 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
       </div>
 
       {/* Connected Devices Bar */}
-      <div className="surface-card p-5">
-        <div className="flex items-center justify-between mb-3.5">
+      <div className="surface-card p-4 sm:p-5">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-ink-secondary" />
+            <Users className="w-3.5 h-3.5 text-ink-secondary" />
             <h2 className="text-xs font-mono font-medium uppercase tracking-wider text-ink-muted">
               Connected Devices ({peers.length})
             </h2>
           </div>
           {otherPeers.length > 0 && (
-            <span className="text-xs font-mono text-emerald-700 flex items-center gap-1.5 font-medium animate-fade-in">
+            <span className="text-xs font-mono text-emerald-800 flex items-center gap-1.5 font-medium animate-fade-in">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
               Ready for direct transfer
             </span>
@@ -233,28 +233,31 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
         </div>
 
         {peers.length === 1 ? (
-          <div className="p-5 rounded-card bg-canvas-subtle border border-border text-center space-y-1">
-            <p className="text-xs font-medium text-ink font-sans">Waiting for a second device to join…</p>
-            <p className="text-[11px] text-ink-muted font-sans">Scan the QR code or share the room code to pair another device.</p>
+          <div className="p-4 rounded-card bg-canvas-subtle border border-border text-center space-y-1">
+            <div className="flex items-center justify-center gap-2 text-xs font-medium text-ink font-sans">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+              <span>Waiting for a second device to connect…</span>
+            </div>
+            <p className="text-[11px] text-ink-muted font-sans">Share the 6-character room code or scan the QR code above.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
             {peers.map((peer) => (
               <div
                 key={peer.id}
-                className={`p-3 rounded-card border transition-all flex items-center justify-between animate-device-connect ${
+                className={`p-2.5 rounded-card border transition-all flex items-center justify-between animate-device-connect ${
                   peer.id === currentDevice.id
                     ? 'bg-canvas-subtle border-ink/30 shadow-subtle'
                     : 'bg-surface border-border hover:border-ink/20 shadow-subtle'
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
-                    {peer.type === 'mobile' ? <Smartphone className="w-4 h-4 text-ink-secondary" /> : <Laptop className="w-4 h-4 text-ink-secondary" />}
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-subtle bg-canvas-dark text-ink flex items-center justify-center border border-border">
+                    {peer.type === 'mobile' ? <Smartphone className="w-3.5 h-3.5 text-ink-secondary" /> : <Laptop className="w-3.5 h-3.5 text-ink-secondary" />}
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-ink truncate max-w-[130px] font-sans">{peer.name}</span>
+                      <span className="text-xs font-bold text-ink truncate max-w-[120px] font-sans">{peer.name}</span>
                       {peer.id === currentDevice.id && (
                         <span className="text-[9px] px-1 py-0.2 rounded-sm bg-canvas-dark text-ink-secondary font-mono font-semibold">YOU</span>
                       )}
@@ -262,9 +265,9 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                         <span className="text-[9px] px-1 py-0.2 rounded-sm bg-canvas-dark text-ink-muted font-mono font-medium">HOST</span>
                       )}
                     </div>
-                    <span className="text-[10px] text-emerald-700 font-mono flex items-center gap-1">
+                    <span className="text-[10px] text-emerald-800 font-mono flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                      Connected · Direct
+                      Direct P2P
                     </span>
                   </div>
                 </div>
@@ -463,13 +466,13 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                         style={{ width: `${t.progressPercent}%` }}
                       />
                     </div>
-                    <div className="flex justify-between text-[11px] font-mono text-ink-secondary">
+                    <div className="flex justify-between text-[11px] font-mono tabular-nums text-ink-secondary">
                       <span>
                         {TransferEngine.formatBytes(t.bytesTransferred)} / {TransferEngine.formatBytes(t.metadata.fileSize)} ({t.progressPercent}%)
                       </span>
                       {t.status === 'transferring' && (
                         <span>
-                          {TransferEngine.formatSpeed(t.speedBytesPerSec)} · {TransferEngine.formatEta(t.etaSeconds)} remaining
+                          {TransferEngine.formatSpeed(t.speedBytesPerSec)} · {TransferEngine.formatEta(t.etaSeconds)}
                         </span>
                       )}
                       {t.status === 'completed' && t.startTime && (
@@ -484,9 +487,9 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                     <div className="pt-0.5 flex items-center justify-between text-[11px] font-mono text-emerald-800">
                       <div className="flex items-center gap-1.5">
                         <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>SHA-256 Integrity verified ✓</span>
+                        <span>SHA-256 Verified ✓</span>
                       </div>
-                      <span className="text-[10px] text-ink-muted">Direct WebRTC DataChannel</span>
+                      <span className="text-[10px] text-ink-muted">WebRTC DataChannel</span>
                     </div>
                   )}
                 </div>
