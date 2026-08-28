@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    background-color: #FBF9F5;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased selection:bg-border selection:text-ink min-h-screen overflow-x-hidden;
+    background-color: #FBF9F5;
+  }
+
+  /* Accessible focus states */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ink/80 ring-offset-2 ring-offset-canvas;
+  }
+
+  /* Custom subtle scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #FBF9F5;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #D5CFBF;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #A1A1AA;
+  }
+}
+
+/* Reusable warm surfaces & tactile interactions */
+.surface-card {
+  @apply bg-surface border border-border shadow-subtle rounded-card transition-all duration-150 ease-out;
+}
+
+.surface-card-interactive {
+  @apply bg-surface border border-border shadow-subtle hover:border-ink/30 hover:shadow-elevated rounded-card transition-all duration-150 ease-out active:scale-[0.99];
+}
+
+.surface-panel {
+  @apply bg-surface border border-border shadow-elevated rounded-modal;
+}
+
+.modal-scrim {
+  @apply fixed inset-0 bg-[#18181B]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in;
+}
+
+/* Tactile button microinteraction */
+.btn-press {
+  @apply active:scale-[0.975] transition-transform duration-100 ease-out;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

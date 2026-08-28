@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#FBF9F5" />
+    <meta name="description" content="Transfer files instantly across any device with zero account, real WebRTC DataChannels, and zero permanent cloud storage." />
+
+    <!-- OpenGraph / SEO -->
+    <meta property="og:title" content="DevDrop — Instant P2P File Transfer" />
+    <meta property="og:description" content="Transfer files instantly across any device. No account. No cables. No cloud storage." />
+    <meta property="og:type" content="website" />
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <title>DevDrop — Instant P2P File Transfer</title>
+  </head>
+  <body class="bg-[#FBF9F5] text-[#18181B] antialiased selection:bg-[#E7E3DA] selection:text-[#18181B]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch((err) => {
+            console.log('SW registration failed:', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>
