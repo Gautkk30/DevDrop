@@ -22,6 +22,7 @@ export interface ActiveTransfer {
   currentChunkIndex: number;
   speedBytesPerSec: number;
   averageSpeedBytesPerSec: number;
+  peakSpeedBytesPerSec?: number;
   etaSeconds: number;
   progressPercent: number;
   verified?: boolean;

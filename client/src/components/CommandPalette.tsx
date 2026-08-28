@@ -1,5 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Plus, LogIn, QrCode, Activity, Download, LogOut, ArrowRight } from 'lucide-react';
+import {
+  Search,
+  Plus,
+  LogIn,
+  QrCode,
+  Activity,
+  Download,
+  LogOut,
+  ArrowRight,
+  UploadCloud,
+  Copy,
+  Share2,
+  Files,
+  RefreshCw,
+  Shield,
+} from 'lucide-react';
 import type { RoomMetadata } from '../shared/types.js';
 
 interface CommandItem {
@@ -15,11 +30,19 @@ interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   room: RoomMetadata | null;
+  hasFailedTransfers?: boolean;
+  hasCompletedTransfers?: boolean;
   onOpenCreate: () => void;
   onOpenJoin: () => void;
   onOpenScanner: () => void;
   onOpenDiagnostics: () => void;
   onOpenHistory?: () => void;
+  onOpenQueue?: () => void;
+  onOpenPrivacy?: () => void;
+  onQuickSend?: () => void;
+  onCopyRoomCode?: () => void;
+  onCopyRoomLink?: () => void;
+  onRetryFailed?: () => void;
   onInstallPwa?: () => void;
   pwaInstallable?: boolean;
   onLeaveRoom?: () => void;
@@ -29,11 +52,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   isOpen,
   onClose,
   room,
+  hasFailedTransfers,
   onOpenCreate,
   onOpenJoin,
   onOpenScanner,
   onOpenDiagnostics,
   onOpenHistory,
+  onOpenQueue,
+  onOpenPrivacy,
+  onQuickSend,
+  onCopyRoomCode,
+  onCopyRoomLink,
+  onRetryFailed,
   onInstallPwa,
   pwaInstallable,
   onLeaveRoom,
@@ -53,13 +83,28 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   if (!isOpen) return null;
 
   const commands: CommandItem[] = [
+    ...(onQuickSend
+      ? [
+          {
+            id: 'quick-send',
+            title: 'Quick Send Files',
+            subtitle: 'Instant drop-to-send ephemeral transfer',
+            icon: <UploadCloud className="w-4 h-4 text-accent" />,
+            action: () => {
+              onClose();
+              onQuickSend();
+            },
+            shortcut: 'Q',
+          },
+        ]
+      : []),
     ...(!room
       ? [
           {
             id: 'create-room',
             title: 'Create Transfer Room',
             subtitle: 'Start a new ephemeral P2P session',
-            icon: <Plus className="w-4 h-4 text-accent" />,
+            icon: <Plus className="w-4 h-4 text-ink" />,
             action: () => {
               onClose();
               onOpenCreate();
@@ -78,13 +123,71 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             shortcut: 'J',
           },
         ]
+      : [
+          ...(onCopyRoomCode
+            ? [
+                {
+                  id: 'copy-code',
+                  title: `Copy Room Code (${room.code})`,
+                  subtitle: 'Copy 6-character room code to clipboard',
+                  icon: <Copy className="w-4 h-4 text-ink" />,
+                  action: () => {
+                    onClose();
+                    onCopyRoomCode();
+                  },
+                },
+              ]
+            : []),
+          ...(onCopyRoomLink
+            ? [
+                {
+                  id: 'copy-link',
+                  title: 'Copy Shareable Link',
+                  subtitle: 'Copy direct join URL to clipboard',
+                  icon: <Share2 className="w-4 h-4 text-ink" />,
+                  action: () => {
+                    onClose();
+                    onCopyRoomLink();
+                  },
+                },
+              ]
+            : []),
+          ...(onOpenQueue
+            ? [
+                {
+                  id: 'file-queue',
+                  title: 'View Multi-File Queue',
+                  subtitle: 'Manage staged files and queue order',
+                  icon: <Files className="w-4 h-4 text-accent" />,
+                  action: () => {
+                    onClose();
+                    onOpenQueue();
+                  },
+                },
+              ]
+            : []),
+        ]),
+    ...(hasFailedTransfers && onRetryFailed
+      ? [
+          {
+            id: 'retry-failed',
+            title: 'Retry Failed Transfer',
+            subtitle: 'Clean restart of failed transfer attempt',
+            icon: <RefreshCw className="w-4 h-4 text-rose-600" />,
+            action: () => {
+              onClose();
+              onRetryFailed();
+            },
+            shortcut: 'R',
+          },
+        ]
       : []),
     ...(onOpenHistory
       ? [
           {
             id: 'history',
             title: 'Recent Transfers',
-            subtitle: 'View local session transfer history',
+            subtitle: 'View local session transfer history & checksums',
             icon: <Activity className="w-4 h-4 text-emerald-600" />,
             action: () => {
               onClose();
@@ -116,6 +219,21 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       shortcut: 'D',
     },
+    ...(onOpenPrivacy
+      ? [
+          {
+            id: 'privacy-session',
+            title: 'Privacy & Session Controls',
+            subtitle: 'Manage ephemeral RAM data and local history',
+            icon: <Shield className="w-4 h-4 text-emerald-700" />,
+            action: () => {
+              onClose();
+              onOpenPrivacy();
+            },
+            shortcut: 'P',
+          },
+        ]
+      : []),
     ...(pwaInstallable && onInstallPwa
       ? [
           {
@@ -134,8 +252,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       ? [
           {
             id: 'leave-room',
-            title: 'Leave Current Room',
-            subtitle: `Exit session ${room.code}`,
+            title: 'Close Session & Clean Up',
+            subtitle: `Exit session ${room.code} and purge RAM`,
             icon: <LogOut className="w-4 h-4 text-rose-600" />,
             action: () => {
               onClose();

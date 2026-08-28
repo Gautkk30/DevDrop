@@ -108,6 +108,9 @@ export interface TransferHistoryEntry {
   timestamp: number;
   durationSec?: number;
   averageSpeedBytesPerSec?: number;
+  peakSpeedBytesPerSec?: number;
+  sha256Checksum?: string;
+  connectionType?: ConnectionType;
   verified: boolean;
   status: 'completed' | 'failed' | 'cancelled';
 }

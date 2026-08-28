@@ -21,11 +21,14 @@ import {
   History,
   Files,
   AlertTriangle,
+  Info,
+  RefreshCw,
 } from 'lucide-react';
 import type { DeviceInfo, RoomMetadata, TransferSpeedSample, NetworkStats } from '../shared/types.js';
 import type { ActiveTransfer } from '../services/TransferEngine.js';
 import { TransferEngine } from '../services/TransferEngine.js';
 import { SpeedGraph } from './SpeedGraph.tsx';
+import { TransferResultSummary } from './TransferResultSummary.tsx';
 
 interface RoomDashboardProps {
   room: RoomMetadata;
@@ -40,6 +43,8 @@ interface RoomDashboardProps {
   onStageFiles?: (files: File[], targetDeviceIds: string[]) => void;
   onOpenQueue?: () => void;
   onOpenHistory?: () => void;
+  onViewTransferDetails?: (transfer: ActiveTransfer) => void;
+  onRetryTransfer?: (transferId: string) => void;
   onPauseTransfer: (transferId: string) => void;
   onResumeTransfer: (transferId: string) => void;
   onCancelTransfer: (transferId: string) => void;
@@ -63,6 +68,8 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
   onStageFiles,
   onOpenQueue,
   onOpenHistory,
+  onViewTransferDetails,
+  onRetryTransfer,
   onPauseTransfer,
   onResumeTransfer,
   onAcceptTransfer,
@@ -460,6 +467,15 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
             )}
           </div>
 
+          {/* Transfer Result Summary Card */}
+          <TransferResultSummary
+            transfers={transfers}
+            connectionType={networkStats?.connectionType}
+            onViewDetails={(t) => onViewTransferDetails?.(t)}
+            onRetryFailed={(id) => onRetryTransfer?.(id)}
+            onCloseSession={onLeaveRoom}
+          />
+
           {/* Real-Time Speed Graph */}
           {speedSamples && speedSamples.length > 1 && (
             <SpeedGraph
@@ -504,6 +520,11 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                           Done
                         </span>
                       )}
+                      {t.status === 'failed' && (
+                        <span className="flex items-center gap-1 text-[11px] text-rose-800 font-mono px-2 py-0.5 rounded-subtle bg-rose-50 border border-rose-200">
+                          Failed
+                        </span>
+                      )}
                       {t.status === 'transferring' && (
                         <span className="flex items-center gap-1 text-[11px] text-accent font-mono px-2 py-0.5 rounded-subtle bg-accent-faint border border-accent/20">
                           <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
@@ -532,6 +553,17 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                         </div>
                       )}
 
+                      {t.status === 'failed' && onRetryTransfer && (
+                        <button
+                          onClick={() => onRetryTransfer(t.metadata.transferId)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-subtle bg-accent text-surface hover:bg-accent-hover text-xs font-sans font-medium btn-press"
+                          title="Retry failed transfer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Retry</span>
+                        </button>
+                      )}
+
                       {t.status === 'transferring' && (
                         <button
                           onClick={() => onPauseTransfer(t.metadata.transferId)}
@@ -548,6 +580,16 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                           title="Resume transfer"
                         >
                           <Play className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {t.status === 'completed' && (
+                        <button
+                          onClick={() => onViewTransferDetails?.(t)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-ink text-xs font-sans font-medium btn-press"
+                          title="Inspect transfer details & checksum"
+                        >
+                          <Info className="w-3.5 h-3.5 text-accent" />
+                          <span>Details</span>
                         </button>
                       )}
                       {t.status === 'completed' && t.receivedChunks && (
@@ -596,6 +638,11 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                       <span className="text-[10px] text-ink-muted">WebRTC DataChannel</span>
                     </div>
                   )}
+                  {t.status === 'failed' && (
+                    <div className="pt-0.5 flex items-center justify-between text-[11px] font-mono text-rose-800">
+                      <span>{t.error || 'Transfer failed during peer-to-peer transmission'}</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -605,4 +652,5 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
     </div>
   );
 };
+
 

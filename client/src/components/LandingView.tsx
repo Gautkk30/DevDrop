@@ -1,14 +1,40 @@
-import React from 'react';
-import { Laptop, Smartphone, ArrowRight, ShieldCheck, Zap, KeyRound } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { ArrowRight, ShieldCheck, Zap, KeyRound, UploadCloud } from 'lucide-react';
 
 interface LandingViewProps {
   onOpenCreate: () => void;
   onOpenJoin: () => void;
+  onQuickSend?: (files: File[]) => void;
 }
 
-export const LandingView: React.FC<LandingViewProps> = ({ onOpenCreate, onOpenJoin }) => {
+export const LandingView: React.FC<LandingViewProps> = ({ onOpenCreate, onOpenJoin, onQuickSend }) => {
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && onQuickSend) {
+      onQuickSend(Array.from(e.dataTransfer.files));
+    }
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0 && onQuickSend) {
+      onQuickSend(Array.from(e.target.files));
+    }
+  };
+
   return (
-    <div className="w-full max-w-4xl mx-auto space-y-12 py-10 sm:py-16 px-4 animate-fade-in">
+    <div className="w-full max-w-4xl mx-auto space-y-10 py-8 sm:py-12 px-4 animate-fade-in">
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileInput}
+        multiple
+        className="hidden"
+      />
+
       {/* Hero Section */}
       <div className="text-center space-y-5 max-w-2xl mx-auto">
         <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-subtle bg-canvas-dark border border-border text-ink-secondary text-xs font-mono">
@@ -26,31 +52,38 @@ export const LandingView: React.FC<LandingViewProps> = ({ onOpenCreate, onOpenJo
           </p>
         </div>
 
-        {/* Minimal Connected Device Schematic */}
-        <div className="py-2 flex items-center justify-center">
-          <div className="bg-surface px-5 py-3 rounded-card border border-border shadow-subtle flex items-center gap-3 sm:gap-6">
-            <div className="flex items-center gap-2 text-ink">
-              <Laptop className="w-4 h-4 text-ink-secondary stroke-[1.75]" />
-              <span className="text-xs font-mono font-medium">Laptop</span>
+        {/* Quick Send Dropzone */}
+        {onQuickSend && (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOver(true);
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`p-6 sm:p-7 rounded-card border-2 border-dashed transition-all cursor-pointer text-center space-y-2 group ${
+              isDragOver
+                ? 'border-accent bg-accent/5 scale-[1.01]'
+                : 'border-border hover:border-ink/30 bg-surface shadow-subtle'
+            }`}
+          >
+            <div className="w-10 h-10 rounded-subtle bg-canvas-dark text-accent mx-auto flex items-center justify-center border border-border group-hover:scale-105 transition-transform">
+              <UploadCloud className="w-5 h-5 stroke-[1.8]" />
             </div>
-
-            <div className="flex items-center gap-1.5 text-accent font-mono text-[11px]">
-              <span className="h-[1px] w-5 sm:w-10 bg-border-strong" />
-              <span className="px-2 py-0.5 rounded-subtle bg-canvas-subtle border border-border text-ink-muted text-[10px]">
-                Direct P2P
+            <div>
+              <span className="text-sm font-bold text-ink font-sans">
+                Drop files here for Quick Send
               </span>
-              <span className="h-[1px] w-5 sm:w-10 bg-border-strong" />
-            </div>
-
-            <div className="flex items-center gap-2 text-ink">
-              <Smartphone className="w-4 h-4 text-ink-secondary stroke-[1.75]" />
-              <span className="text-xs font-mono font-medium">Phone</span>
+              <p className="text-xs text-ink-muted font-sans mt-0.5">
+                or click to browse from this device
+              </p>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-1">
           <button
             onClick={onOpenCreate}
             className="w-full sm:w-auto px-5 py-2.5 rounded-subtle bg-ink hover:bg-ink/90 text-surface font-medium text-sm transition-all flex items-center justify-center gap-2 shadow-subtle group btn-press"

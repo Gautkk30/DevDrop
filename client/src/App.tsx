@@ -22,6 +22,9 @@ import { PreTransferModal } from './components/PreTransferModal.tsx';
 import { ErrorRecoveryModal, type ErrorRecoveryDetails } from './components/ErrorRecoveryModal.tsx';
 import { TransferHistoryModal } from './components/TransferHistoryModal.tsx';
 import { FileQueueModal } from './components/FileQueueModal.tsx';
+import { TransferDetailsModal } from './components/TransferDetailsModal.tsx';
+import { PrivacySessionModal } from './components/PrivacySessionModal.tsx';
+import { DeviceIdentifier } from './services/DeviceIdentifier.js';
 
 export function App() {
   const [currentDevice, setCurrentDevice] = useState<DeviceInfo | null>(null);
@@ -40,9 +43,12 @@ export function App() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
+  const [detailsTransfer, setDetailsTransfer] = useState<ActiveTransfer | TransferHistoryEntry | null>(null);
   const [joinInitialCode, setJoinInitialCode] = useState('');
 
-  // Tier 1 Features: Local History, Queue, Speed Graph, Drag-and-Drop Anywhere
+  // Tier 1 & Tier 2 & Tier 3 Features
   const [history, setHistory] = useState<TransferHistoryEntry[]>(() => HistoryStorage.getHistory());
   const [fileQueue, setFileQueue] = useState<QueuedFile[]>([]);
   const [queueTargets, setQueueTargets] = useState<string[]>([]);
@@ -64,6 +70,7 @@ export function App() {
   const activeTransfersMap = useRef<Map<string, ActiveTransfer>>(new Map());
   const dragCounter = useRef<number>(0);
   const queueProcessingRef = useRef<boolean>(false);
+  const quickSendFilesRef = useRef<File[] | null>(null);
 
   const addToast = useCallback((title: string, message?: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     const id = 'toast_' + Math.random().toString(36).substring(2, 9);
@@ -437,6 +444,9 @@ export function App() {
           peerDeviceName: transfer.metadata.senderDeviceName,
           durationSec: transfer.startTime ? (Date.now() - transfer.startTime) / 1000 : undefined,
           averageSpeedBytesPerSec: transfer.averageSpeedBytesPerSec || transfer.speedBytesPerSec,
+          peakSpeedBytesPerSec: transfer.peakSpeedBytesPerSec,
+          sha256Checksum: transfer.metadata.sha256Checksum,
+          connectionType: networkStats?.connectionType,
           verified: true,
           status: 'completed',
         });
@@ -456,6 +466,9 @@ export function App() {
           peerDeviceName: transfer.metadata.senderDeviceName,
           durationSec: transfer.startTime ? (Date.now() - transfer.startTime) / 1000 : undefined,
           averageSpeedBytesPerSec: transfer.averageSpeedBytesPerSec,
+          peakSpeedBytesPerSec: transfer.peakSpeedBytesPerSec,
+          sha256Checksum: transfer.metadata.sha256Checksum,
+          connectionType: networkStats?.connectionType,
           verified: false,
           status: 'failed',
         });
@@ -474,6 +487,7 @@ export function App() {
         fileType: transfer.metadata.fileType,
         direction: 'received',
         peerDeviceName: transfer.metadata.senderDeviceName,
+        connectionType: networkStats?.connectionType,
         verified: false,
         status: 'failed',
       });
@@ -502,6 +516,17 @@ export function App() {
         },
       },
     });
+  };
+
+  const handleQuickSend = (files: File[]) => {
+    quickSendFilesRef.current = files;
+    handleCreateRoom({
+      deviceName: DeviceIdentifier.getDefaultDeviceName(),
+      deviceType: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+      platformDescription: DeviceIdentifier.getDeviceDescription(),
+      isOneTime: true,
+    });
+    addToast('Quick Send Started', 'Room created. Share QR or link to send files.', 'info');
   };
 
   const handleJoinRoom = (options: { roomCode: string; deviceName: string; deviceType: any; platformDescription?: string; password?: string }) => {
@@ -570,6 +595,38 @@ export function App() {
     });
   };
 
+  const handleRetryTransfer = async (failedTransferId: string) => {
+    const failedTransfer = activeTransfersMap.current.get(failedTransferId);
+    if (!failedTransfer || !failedTransfer.file) {
+      addToast('Cannot Retry', 'Original file handle not found in browser memory', 'warning');
+      return;
+    }
+
+    activeTransfersMap.current.delete(failedTransferId);
+    setTransfers(Array.from(activeTransfersMap.current.values()));
+
+    addToast('Retrying Transfer', `Restarting ${failedTransfer.metadata.fileName}`, 'info');
+    await handleSendFile(failedTransfer.file, failedTransfer.metadata.targetDeviceIds);
+  };
+
+  const handleCloseSessionAndCleanup = () => {
+    setRoom(null);
+    setPeers([]);
+    setFileQueue([]);
+    setTransfers([]);
+    setSpeedSamples([]);
+    activeTransfersMap.current.clear();
+    webrtcService.closePeerConnection('*');
+    if (previewBlob) {
+      setPreviewBlob(null);
+      setPreviewTransfer(null);
+    }
+    setIsDetailsOpen(false);
+    setIsPrivacyOpen(false);
+    setIsQueueOpen(false);
+    addToast('Session Ended', 'Temporary session data cleared from this browser.', 'info');
+  };
+
   const autoAcceptTransferOffer = (metadata: TransferMetadata) => {
     const newTransfer: ActiveTransfer = {
       metadata,
@@ -616,6 +673,8 @@ export function App() {
         fileType: transfer.metadata.fileType,
         direction: 'sent',
         peerDeviceName: peers.find((p) => p.id === targetId)?.name || 'Peer',
+        sha256Checksum: transfer.metadata.sha256Checksum,
+        connectionType: networkStats?.connectionType,
         verified: false,
         status: 'failed',
       });
@@ -637,6 +696,7 @@ export function App() {
         const instantSpeed = elapsedSec > 0 ? bytesTransferred / elapsedSec : 0;
         transfer.speedBytesPerSec = TransferEngine.smoothSpeed(transfer.speedBytesPerSec, instantSpeed);
         transfer.averageSpeedBytesPerSec = instantSpeed;
+        transfer.peakSpeedBytesPerSec = Math.max(transfer.peakSpeedBytesPerSec || 0, instantSpeed);
 
         const remainingBytes = Math.max(0, transfer.metadata.fileSize - bytesTransferred);
         transfer.etaSeconds = transfer.speedBytesPerSec > 0 ? remainingBytes / transfer.speedBytesPerSec : 0;
@@ -670,6 +730,9 @@ export function App() {
           peerDeviceName: peers.find((p) => p.id === targetId)?.name || 'Peer',
           durationSec: transfer.startTime ? (Date.now() - transfer.startTime) / 1000 : undefined,
           averageSpeedBytesPerSec: transfer.averageSpeedBytesPerSec || transfer.speedBytesPerSec,
+          peakSpeedBytesPerSec: transfer.peakSpeedBytesPerSec,
+          sha256Checksum: transfer.metadata.sha256Checksum,
+          connectionType: networkStats?.connectionType,
           verified: true,
           status: 'completed',
         });
@@ -700,6 +763,9 @@ export function App() {
           peerDeviceName: peers.find((p) => p.id === targetId)?.name || 'Peer',
           durationSec: transfer.startTime ? (Date.now() - transfer.startTime) / 1000 : undefined,
           averageSpeedBytesPerSec: transfer.averageSpeedBytesPerSec,
+          peakSpeedBytesPerSec: transfer.peakSpeedBytesPerSec,
+          sha256Checksum: transfer.metadata.sha256Checksum,
+          connectionType: networkStats?.connectionType,
           verified: false,
           status: 'failed',
         });
@@ -880,6 +946,7 @@ export function App() {
           <LandingView
             onOpenCreate={() => setIsCreateOpen(true)}
             onOpenJoin={() => setIsJoinOpen(true)}
+            onQuickSend={handleQuickSend}
           />
         ) : (
           currentDevice && (
@@ -899,6 +966,11 @@ export function App() {
               onStageFiles={handleStageFiles}
               onOpenQueue={() => setIsQueueOpen(true)}
               onOpenHistory={() => setIsHistoryOpen(true)}
+              onViewTransferDetails={(t) => {
+                setDetailsTransfer(t);
+                setIsDetailsOpen(true);
+              }}
+              onRetryTransfer={handleRetryTransfer}
               onPauseTransfer={handlePauseTransfer}
               onResumeTransfer={handleResumeTransfer}
               onCancelTransfer={handleCancelTransfer}
@@ -908,13 +980,7 @@ export function App() {
               }}
               onRejectTransfer={(id) => handleCancelTransfer(id)}
               onPreviewFile={handlePreviewFile}
-              onLeaveRoom={() => {
-                setRoom(null);
-                setPeers([]);
-                setFileQueue([]);
-                webrtcService.closePeerConnection('*');
-                addToast('Session Ended', 'You left the room', 'info');
-              }}
+              onLeaveRoom={handleCloseSessionAndCleanup}
               onNotify={addToast}
             />
           )
@@ -978,6 +1044,28 @@ export function App() {
         onDownload={() => previewTransfer && handleDownloadFile(previewTransfer)}
       />
 
+      <TransferDetailsModal
+        isOpen={isDetailsOpen}
+        onClose={() => {
+          setIsDetailsOpen(false);
+          setDetailsTransfer(null);
+        }}
+        transfer={detailsTransfer}
+        connectionType={networkStats?.connectionType}
+      />
+
+      <PrivacySessionModal
+        isOpen={isPrivacyOpen}
+        onClose={() => setIsPrivacyOpen(false)}
+        room={room}
+        onClearHistory={() => {
+          HistoryStorage.clearHistory();
+          setHistory([]);
+          addToast('History Cleared', 'All local transfer records removed', 'info');
+        }}
+        onCloseSession={handleCloseSessionAndCleanup}
+      />
+
       <TransferHistoryModal
         isOpen={isHistoryOpen}
         onClose={() => setIsHistoryOpen(false)}
@@ -990,6 +1078,10 @@ export function App() {
         onRemoveEntry={(id) => {
           HistoryStorage.removeEntry(id);
           setHistory(HistoryStorage.getHistory());
+        }}
+        onSelectEntry={(entry) => {
+          setDetailsTransfer(entry);
+          setIsDetailsOpen(true);
         }}
       />
 
@@ -1035,19 +1127,35 @@ export function App() {
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
         room={room}
+        hasFailedTransfers={transfers.some((t) => t.status === 'failed')}
+        hasCompletedTransfers={transfers.some((t) => t.status === 'completed')}
         onOpenCreate={() => setIsCreateOpen(true)}
         onOpenJoin={() => setIsJoinOpen(true)}
         onOpenScanner={() => setIsScannerOpen(true)}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
         onOpenHistory={() => setIsHistoryOpen(true)}
+        onOpenQueue={() => setIsQueueOpen(true)}
+        onOpenPrivacy={() => setIsPrivacyOpen(true)}
+        onCopyRoomCode={() => {
+          if (room) {
+            navigator.clipboard.writeText(room.code);
+            addToast('Code Copied', `Room code ${room.code} copied`, 'success');
+          }
+        }}
+        onCopyRoomLink={() => {
+          if (room) {
+            const url = `${window.location.origin}/join/${room.code}`;
+            navigator.clipboard.writeText(url);
+            addToast('Link Copied', 'Direct join URL copied', 'success');
+          }
+        }}
+        onRetryFailed={() => {
+          const failed = transfers.find((t) => t.status === 'failed');
+          if (failed) handleRetryTransfer(failed.metadata.transferId);
+        }}
         onInstallPwa={() => pwaEvent && pwaEvent.prompt()}
         pwaInstallable={!!pwaEvent}
-        onLeaveRoom={() => {
-          setRoom(null);
-          setPeers([]);
-          webrtcService.closePeerConnection('*');
-          addToast('Session Ended', 'You left the room', 'info');
-        }}
+        onLeaveRoom={handleCloseSessionAndCleanup}
       />
 
       <ErrorRecoveryModal
