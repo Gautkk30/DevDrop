@@ -26,10 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
           className="flex items-center gap-2.5 cursor-pointer group"
           onClick={() => (window.location.href = '/')}
         >
-          <div className="w-8 h-8 rounded-subtle bg-ink text-surface flex items-center justify-center font-mono font-bold text-sm tracking-tighter">
-            <span>D</span>
-            <span className="text-accent">·</span>
-          </div>
+          <img src="/favicon.png" alt="DevDrop Logo" className="w-8 h-8 rounded-subtle shadow-subtle object-cover" />
           <div>
             <div className="flex items-center gap-2">
               <span className="font-semibold text-base tracking-tight text-ink font-sans">DevDrop</span>
