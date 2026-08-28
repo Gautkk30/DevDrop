@@ -85,3 +85,34 @@ export interface SignalingMessage {
   payload?: any;
   error?: string;
 }
+
+export interface QueuedFile {
+  id: string;
+  file: any;
+  name: string;
+  size: number;
+  type: string;
+  status: 'queued' | 'preparing' | 'transferring' | 'completed' | 'failed' | 'cancelled';
+  progressPercent: number;
+  error?: string;
+}
+
+export interface TransferHistoryEntry {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  direction: 'sent' | 'received';
+  peerDeviceName: string;
+  timestamp: number;
+  durationSec?: number;
+  averageSpeedBytesPerSec?: number;
+  verified: boolean;
+  status: 'completed' | 'failed' | 'cancelled';
+}
+
+export interface TransferSpeedSample {
+  timestamp: number;
+  speedBytesPerSec: number;
+}
+

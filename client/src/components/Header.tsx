@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Download, QrCode } from 'lucide-react';
+import { Activity, Download, QrCode, History } from 'lucide-react';
 import type { RoomMetadata } from '../shared/types.js';
 import brandLogo from '../assets/brand-logo.png';
 
@@ -8,6 +8,7 @@ interface HeaderProps {
   onOpenDiagnostics: () => void;
   onOpenJoinScan: () => void;
   onOpenCommandPalette?: () => void;
+  onOpenHistory?: () => void;
   pwaInstallable: boolean;
   onInstallPwa: () => void;
 }
@@ -17,6 +18,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDiagnostics,
   onOpenJoinScan,
   onOpenCommandPalette,
+  onOpenHistory,
   pwaInstallable,
   onInstallPwa,
 }) => {
@@ -42,6 +44,17 @@ export const Header: React.FC<HeaderProps> = ({
         )}
 
         <div className="flex items-center gap-2 sm:gap-3">
+          {onOpenHistory && (
+            <button
+              onClick={onOpenHistory}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-ink-secondary hover:text-ink text-xs font-medium transition-all shadow-subtle btn-press"
+              title="Recent Transfer History"
+            >
+              <History className="w-3.5 h-3.5 text-ink-secondary" />
+              <span className="hidden sm:inline">History</span>
+            </button>
+          )}
+
           {onOpenCommandPalette && (
             <button
               onClick={onOpenCommandPalette}

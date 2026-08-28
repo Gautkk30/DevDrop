@@ -18,19 +18,26 @@ import {
   CheckCircle2,
   Eye,
   LogOut,
+  History,
+  Files,
 } from 'lucide-react';
-import type { DeviceInfo, RoomMetadata } from '../shared/types.js';
+import type { DeviceInfo, RoomMetadata, TransferSpeedSample } from '../shared/types.js';
 import type { ActiveTransfer } from '../services/TransferEngine.js';
 import { TransferEngine } from '../services/TransferEngine.js';
+import { SpeedGraph } from './SpeedGraph.tsx';
 
 interface RoomDashboardProps {
   room: RoomMetadata;
   currentDevice: DeviceInfo;
   peers: DeviceInfo[];
   transfers: ActiveTransfer[];
+  speedSamples?: TransferSpeedSample[];
+  queueLength?: number;
   onSendFile: (file: File, targetDeviceIds: string[]) => void;
   onSendFolder: (files: FileList, targetDeviceIds: string[]) => void;
   onStageFiles?: (files: File[], targetDeviceIds: string[]) => void;
+  onOpenQueue?: () => void;
+  onOpenHistory?: () => void;
   onPauseTransfer: (transferId: string) => void;
   onResumeTransfer: (transferId: string) => void;
   onCancelTransfer: (transferId: string) => void;
@@ -46,9 +53,13 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
   currentDevice,
   peers,
   transfers,
+  speedSamples = [],
+  queueLength = 0,
   onSendFile,
   onSendFolder,
   onStageFiles,
+  onOpenQueue,
+  onOpenHistory,
   onPauseTransfer,
   onResumeTransfer,
   onAcceptTransfer,
@@ -189,7 +200,25 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
             </p>
           </div>
 
-          <div>
+          <div className="flex items-center gap-2">
+            {queueLength > 0 && onOpenQueue && (
+              <button
+                onClick={onOpenQueue}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-subtle bg-surface hover:bg-canvas-subtle border border-accent/40 text-accent text-xs font-sans font-medium transition-all shadow-subtle btn-press"
+              >
+                <Files className="w-3.5 h-3.5" />
+                <span>Queue ({queueLength})</span>
+              </button>
+            )}
+            {onOpenHistory && (
+              <button
+                onClick={onOpenHistory}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-subtle bg-surface hover:bg-canvas-subtle border border-border text-xs font-sans font-medium text-ink-secondary hover:text-ink transition-all shadow-subtle btn-press"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>History</span>
+              </button>
+            )}
             <button
               onClick={onLeaveRoom}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-subtle bg-surface hover:bg-rose-50 border border-border hover:border-rose-200 text-xs font-sans font-medium text-ink-muted hover:text-rose-700 transition-all shadow-subtle btn-press"
@@ -333,7 +362,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
             className={`border-2 border-dashed rounded-card p-6 text-center space-y-2.5 transition-all cursor-pointer ${
               otherPeers.length > 0
                 ? isDraggingOver
-                  ? 'border-accent bg-accent-faint scale-[1.01]'
+                  ? 'border-accent bg-accent-faint scale-[0.99]'
                   : 'border-border hover:border-ink/40 bg-canvas-subtle hover:bg-surface'
                 : 'border-border opacity-50 cursor-not-allowed bg-canvas-subtle'
             }`}
@@ -361,9 +390,28 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
 
         {/* Right Column: Transfer Queue & Live Activity */}
         <div className="lg:col-span-2 surface-card p-5 space-y-4">
-          <h2 className="text-xs font-mono font-medium uppercase tracking-wider text-ink-muted">
-            Transfer Activity ({transfers.length})
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-mono font-medium uppercase tracking-wider text-ink-muted">
+              Transfer Activity ({transfers.length})
+            </h2>
+            {queueLength > 0 && onOpenQueue && (
+              <button
+                onClick={onOpenQueue}
+                className="text-xs font-mono text-accent hover:underline flex items-center gap-1"
+              >
+                <span>View Queue ({queueLength})</span>
+              </button>
+            )}
+          </div>
+
+          {/* Real-Time Speed Graph */}
+          {speedSamples && speedSamples.length > 1 && (
+            <SpeedGraph
+              samples={speedSamples}
+              currentSpeed={transfers.find((t) => t.status === 'transferring')?.speedBytesPerSec || 0}
+              averageSpeed={transfers.find((t) => t.status === 'transferring')?.averageSpeedBytesPerSec}
+            />
+          )}
 
           {transfers.length === 0 ? (
             <div className="text-center py-14 space-y-2 border border-dashed border-border rounded-card bg-canvas-subtle">

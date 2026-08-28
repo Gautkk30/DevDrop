@@ -1,9 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { UploadCloud } from 'lucide-react';
 import { signalingClient } from './services/SignalingClient.js';
 import { webrtcService } from './services/WebRTCService.js';
 import type { ActiveTransfer } from './services/TransferEngine.js';
 import { TransferEngine, CHUNK_SIZE } from './services/TransferEngine.js';
-import type { DeviceInfo, RoomMetadata, NetworkStats, TransferMetadata } from './shared/types.js';
+import { HistoryStorage } from './services/HistoryStorage.js';
+import type { DeviceInfo, RoomMetadata, NetworkStats, TransferMetadata, QueuedFile, TransferHistoryEntry, TransferSpeedSample } from './shared/types.js';
 
 import { Header } from './components/Header.tsx';
 import { LandingView } from './components/LandingView.tsx';
@@ -18,6 +20,8 @@ import { ToastContainer, type ToastItem } from './components/ToastContainer.tsx'
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { PreTransferModal } from './components/PreTransferModal.tsx';
 import { ErrorRecoveryModal, type ErrorRecoveryDetails } from './components/ErrorRecoveryModal.tsx';
+import { TransferHistoryModal } from './components/TransferHistoryModal.tsx';
+import { FileQueueModal } from './components/FileQueueModal.tsx';
 
 export function App() {
   const [currentDevice, setCurrentDevice] = useState<DeviceInfo | null>(null);
@@ -28,12 +32,23 @@ export function App() {
   const [transfers, setTransfers] = useState<ActiveTransfer[]>([]);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
+  // Modals & Panels
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isJoinOpen, setIsJoinOpen] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [joinInitialCode, setJoinInitialCode] = useState('');
+
+  // Tier 1 Features: Local History, Queue, Speed Graph, Drag-and-Drop Anywhere
+  const [history, setHistory] = useState<TransferHistoryEntry[]>(() => HistoryStorage.getHistory());
+  const [fileQueue, setFileQueue] = useState<QueuedFile[]>([]);
+  const [queueTargets, setQueueTargets] = useState<string[]>([]);
+  const [isQueueTransferring, setIsQueueTransferring] = useState(false);
+  const [speedSamples, setSpeedSamples] = useState<TransferSpeedSample[]>([]);
+  const [isDraggingWindow, setIsDraggingWindow] = useState(false);
 
   const [stagingFiles, setStagingFiles] = useState<File[]>([]);
   const [stagingTargets, setStagingTargets] = useState<string[]>([]);
@@ -47,6 +62,8 @@ export function App() {
   const [pwaEvent, setPwaEvent] = useState<any>(null);
 
   const activeTransfersMap = useRef<Map<string, ActiveTransfer>>(new Map());
+  const dragCounter = useRef<number>(0);
+  const queueProcessingRef = useRef<boolean>(false);
 
   const addToast = useCallback((title: string, message?: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     const id = 'toast_' + Math.random().toString(36).substring(2, 9);
@@ -56,6 +73,61 @@ export function App() {
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  // Window-level Drag and Drop Anywhere
+  useEffect(() => {
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current += 1;
+      if (e.dataTransfer?.types?.includes('Files')) {
+        setIsDraggingWindow(true);
+      }
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current -= 1;
+      if (dragCounter.current <= 0) {
+        dragCounter.current = 0;
+        setIsDraggingWindow(false);
+      }
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setIsDraggingWindow(false);
+
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        const dropped = Array.from(e.dataTransfer.files);
+        const otherPeers = peers.filter((p) => p.id !== currentDevice?.id);
+        const targets = otherPeers.map((p) => p.id);
+
+        if (room && targets.length > 0) {
+          handleStageFiles(dropped, targets);
+        } else if (!room) {
+          setIsCreateOpen(true);
+          addToast('Files Ready', 'Create or join a room to send your dropped files', 'info');
+        }
+      }
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, [room, peers, currentDevice]);
 
   // Global Keyboard Shortcuts (Ctrl/Cmd + K for Command Palette, Escape for Modals)
   useEffect(() => {
@@ -69,6 +141,8 @@ export function App() {
         setIsScannerOpen(false);
         setIsDiagnosticsOpen(false);
         setIsCommandPaletteOpen(false);
+        setIsHistoryOpen(false);
+        setIsQueueOpen(false);
         setIsStagingOpen(false);
         setSecurityModalMetadata(null);
         setPreviewTransfer(null);
@@ -313,6 +387,9 @@ export function App() {
       targetTransfer.etaSeconds = targetTransfer.speedBytesPerSec > 0 ? remainingBytes / targetTransfer.speedBytesPerSec : 0;
       targetTransfer.progressPercent = Math.min(100, Math.round((targetTransfer.bytesTransferred / targetTransfer.metadata.fileSize) * 100));
 
+      // Record speed sample
+      setSpeedSamples((prev) => [...prev.slice(-59), { timestamp: now, speedBytesPerSec: targetTransfer.speedBytesPerSec }]);
+
       if (targetTransfer.bytesTransferred >= targetTransfer.metadata.fileSize || targetTransfer.currentChunkIndex >= totalChunks) {
         targetTransfer.status = 'verifying';
         updateTransferState(targetTransfer);
@@ -338,12 +415,39 @@ export function App() {
         transfer.status = 'completed';
         updateTransferState(transfer);
         addToast('Transfer Complete', `Received ${transfer.metadata.fileName} (${TransferEngine.formatBytes(transfer.metadata.fileSize)})`, 'success');
+
+        // Record in local history
+        HistoryStorage.addEntry({
+          fileName: transfer.metadata.fileName,
+          fileSize: transfer.metadata.fileSize,
+          fileType: transfer.metadata.fileType,
+          direction: 'received',
+          peerDeviceName: transfer.metadata.senderDeviceName,
+          durationSec: transfer.startTime ? (Date.now() - transfer.startTime) / 1000 : undefined,
+          averageSpeedBytesPerSec: transfer.averageSpeedBytesPerSec || transfer.speedBytesPerSec,
+          verified: true,
+          status: 'completed',
+        });
+        setHistory(HistoryStorage.getHistory());
       } else {
         transfer.verified = false;
         transfer.status = 'failed';
         transfer.error = 'SHA-256 integrity verification failed: file corrupted during peer-to-peer transmission';
         updateTransferState(transfer);
         addToast('Verification Failed', 'SHA-256 checksum mismatch — file integrity failed', 'error');
+
+        HistoryStorage.addEntry({
+          fileName: transfer.metadata.fileName,
+          fileSize: transfer.metadata.fileSize,
+          fileType: transfer.metadata.fileType,
+          direction: 'received',
+          peerDeviceName: transfer.metadata.senderDeviceName,
+          durationSec: transfer.startTime ? (Date.now() - transfer.startTime) / 1000 : undefined,
+          averageSpeedBytesPerSec: transfer.averageSpeedBytesPerSec,
+          verified: false,
+          status: 'failed',
+        });
+        setHistory(HistoryStorage.getHistory());
       }
     } catch (err: any) {
       transfer.verified = false;
@@ -351,6 +455,17 @@ export function App() {
       transfer.error = 'Failed to verify file integrity: ' + err.message;
       updateTransferState(transfer);
       addToast('Integrity Error', err.message, 'error');
+
+      HistoryStorage.addEntry({
+        fileName: transfer.metadata.fileName,
+        fileSize: transfer.metadata.fileSize,
+        fileType: transfer.metadata.fileType,
+        direction: 'received',
+        peerDeviceName: transfer.metadata.senderDeviceName,
+        verified: false,
+        status: 'failed',
+      });
+      setHistory(HistoryStorage.getHistory());
     }
   };
 
@@ -480,6 +595,17 @@ export function App() {
       transfer.status = 'failed';
       transfer.error = 'WebRTC DataChannel not available for peer';
       updateTransferState(transfer);
+
+      HistoryStorage.addEntry({
+        fileName: transfer.metadata.fileName,
+        fileSize: transfer.metadata.fileSize,
+        fileType: transfer.metadata.fileType,
+        direction: 'sent',
+        peerDeviceName: peers.find((p) => p.id === targetId)?.name || 'Peer',
+        verified: false,
+        status: 'failed',
+      });
+      setHistory(HistoryStorage.getHistory());
       return;
     }
 
@@ -501,6 +627,18 @@ export function App() {
         const remainingBytes = Math.max(0, transfer.metadata.fileSize - bytesTransferred);
         transfer.etaSeconds = transfer.speedBytesPerSec > 0 ? remainingBytes / transfer.speedBytesPerSec : 0;
 
+        // Sample speed
+        setSpeedSamples((prev) => [...prev.slice(-59), { timestamp: now, speedBytesPerSec: transfer.speedBytesPerSec }]);
+
+        // Update queue item progress if active
+        setFileQueue((prev) =>
+          prev.map((item) =>
+            item.file === transfer.file
+              ? { ...item, status: 'transferring', progressPercent: transfer.progressPercent }
+              : item
+          )
+        );
+
         updateTransferState(transfer);
       },
       () => {
@@ -508,15 +646,89 @@ export function App() {
         transfer.verified = true;
         updateTransferState(transfer);
         addToast('Transfer Sent', `Finished sending ${transfer.metadata.fileName}`, 'success');
+
+        // Record history
+        HistoryStorage.addEntry({
+          fileName: transfer.metadata.fileName,
+          fileSize: transfer.metadata.fileSize,
+          fileType: transfer.metadata.fileType,
+          direction: 'sent',
+          peerDeviceName: peers.find((p) => p.id === targetId)?.name || 'Peer',
+          durationSec: transfer.startTime ? (Date.now() - transfer.startTime) / 1000 : undefined,
+          averageSpeedBytesPerSec: transfer.averageSpeedBytesPerSec || transfer.speedBytesPerSec,
+          verified: true,
+          status: 'completed',
+        });
+        setHistory(HistoryStorage.getHistory());
+
+        // Update queue item and process next queued file
+        setFileQueue((prev) => {
+          const updated = prev.map((item) =>
+            item.file === transfer.file ? { ...item, status: 'completed' as const, progressPercent: 100 } : item
+          );
+          return updated;
+        });
+
+        // Trigger next file in queue sequentially
+        setTimeout(() => processNextInQueue(), 200);
       },
       (err) => {
         transfer.status = 'failed';
         transfer.error = err.message;
         updateTransferState(transfer);
         addToast('Transfer Failed', err.message, 'error');
+
+        HistoryStorage.addEntry({
+          fileName: transfer.metadata.fileName,
+          fileSize: transfer.metadata.fileSize,
+          fileType: transfer.metadata.fileType,
+          direction: 'sent',
+          peerDeviceName: peers.find((p) => p.id === targetId)?.name || 'Peer',
+          durationSec: transfer.startTime ? (Date.now() - transfer.startTime) / 1000 : undefined,
+          averageSpeedBytesPerSec: transfer.averageSpeedBytesPerSec,
+          verified: false,
+          status: 'failed',
+        });
+        setHistory(HistoryStorage.getHistory());
+
+        setFileQueue((prev) =>
+          prev.map((item) =>
+            item.file === transfer.file ? { ...item, status: 'failed' as const, error: err.message } : item
+          )
+        );
+
+        // Continue next file even if one failed
+        setTimeout(() => processNextInQueue(), 200);
       },
       () => transfer.status === 'paused' || transfer.status === 'cancelled'
     );
+  };
+
+  // Sequential Multi-File Queue Processor
+  const processNextInQueue = () => {
+    setFileQueue((currentQueue) => {
+      const nextIndex = currentQueue.findIndex((item) => item.status === 'queued');
+      if (nextIndex === -1) {
+        setIsQueueTransferring(false);
+        queueProcessingRef.current = false;
+        return currentQueue;
+      }
+
+      const nextItem = currentQueue[nextIndex];
+      const updatedQueue = [...currentQueue];
+      updatedQueue[nextIndex] = { ...nextItem, status: 'preparing' };
+
+      // Dispatch next transfer
+      handleSendFile(nextItem.file, queueTargets);
+      return updatedQueue;
+    });
+  };
+
+  const handleStartQueueTransfer = () => {
+    if (fileQueue.length === 0 || queueTargets.length === 0) return;
+    setIsQueueTransferring(true);
+    queueProcessingRef.current = true;
+    processNextInQueue();
   };
 
   const handlePauseTransfer = (transferId: string) => {
@@ -544,6 +756,17 @@ export function App() {
       t.status = 'cancelled';
       t.receivedChunks = [];
       updateTransferState(t);
+
+      HistoryStorage.addEntry({
+        fileName: t.metadata.fileName,
+        fileSize: t.metadata.fileSize,
+        fileType: t.metadata.fileType,
+        direction: t.metadata.senderDeviceId === currentDevice?.id ? 'sent' : 'received',
+        peerDeviceName: 'Peer',
+        verified: false,
+        status: 'cancelled',
+      });
+      setHistory(HistoryStorage.getHistory());
 
       if (currentDevice && t.metadata.targetDeviceIds) {
         t.metadata.targetDeviceIds.forEach((targetId) => {
@@ -579,27 +802,61 @@ export function App() {
   };
 
   const handleStageFiles = (files: File[], targetIds: string[]) => {
+    const newQueueItems: QueuedFile[] = files.map((file) => ({
+      id: 'q_' + Math.random().toString(36).substring(2, 9),
+      file,
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+      status: 'queued',
+      progressPercent: 0,
+    }));
+
+    setFileQueue((prev) => [...prev, ...newQueueItems]);
+    setQueueTargets(targetIds);
     setStagingFiles(files);
     setStagingTargets(targetIds);
-    setIsStagingOpen(true);
+    setIsQueueOpen(true);
   };
 
-  const handleConfirmStagedTransfer = () => {
-    if (stagingFiles.length > 0 && stagingTargets.length > 0) {
-      stagingFiles.forEach((file) => handleSendFile(file, stagingTargets));
-      setStagingFiles([]);
-      setStagingTargets([]);
-      setIsStagingOpen(false);
-    }
+  const handleAddMoreFilesToQueue = (files: File[]) => {
+    const newItems: QueuedFile[] = files.map((file) => ({
+      id: 'q_' + Math.random().toString(36).substring(2, 9),
+      file,
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+      status: 'queued',
+      progressPercent: 0,
+    }));
+    setFileQueue((prev) => [...prev, ...newItems]);
+  };
+
+  const handleRemoveQueueFile = (id: string) => {
+    setFileQueue((prev) => prev.filter((f) => f.id !== id));
   };
 
   return (
-    <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans selection:bg-border selection:text-ink">
+    <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans selection:bg-border selection:text-ink relative">
+      {/* Global Drag and Drop Anywhere Overlay */}
+      {isDraggingWindow && (
+        <div className="fixed inset-0 z-50 bg-[#18181B]/25 backdrop-blur-[2px] pointer-events-none flex items-center justify-center p-6 animate-fade-in">
+          <div className="bg-surface border-2 border-dashed border-accent rounded-modal p-8 shadow-modal text-center space-y-2 max-w-sm">
+            <UploadCloud className="w-8 h-8 text-accent mx-auto stroke-[1.8]" />
+            <h3 className="text-sm font-bold text-ink font-sans">Release to drop files</h3>
+            <p className="text-xs text-ink-muted font-sans">
+              Files will be added to your transfer queue
+            </p>
+          </div>
+        </div>
+      )}
+
       <Header
         room={room}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
         onOpenJoinScan={() => setIsScannerOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        onOpenHistory={() => setIsHistoryOpen(true)}
         pwaInstallable={!!pwaEvent}
         onInstallPwa={() => pwaEvent && pwaEvent.prompt()}
       />
@@ -617,12 +874,16 @@ export function App() {
               currentDevice={currentDevice}
               peers={peers}
               transfers={transfers}
+              speedSamples={speedSamples}
+              queueLength={fileQueue.length}
               onSendFile={handleSendFile}
               onSendFolder={(files, targetIds) => {
                 const list = Array.from(files);
                 handleStageFiles(list, targetIds);
               }}
               onStageFiles={handleStageFiles}
+              onOpenQueue={() => setIsQueueOpen(true)}
+              onOpenHistory={() => setIsHistoryOpen(true)}
               onPauseTransfer={handlePauseTransfer}
               onResumeTransfer={handleResumeTransfer}
               onCancelTransfer={handleCancelTransfer}
@@ -635,6 +896,7 @@ export function App() {
               onLeaveRoom={() => {
                 setRoom(null);
                 setPeers([]);
+                setFileQueue([]);
                 webrtcService.closePeerConnection('*');
                 addToast('Session Ended', 'You left the room', 'info');
               }}
@@ -701,6 +963,38 @@ export function App() {
         onDownload={() => previewTransfer && handleDownloadFile(previewTransfer)}
       />
 
+      <TransferHistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        history={history}
+        onClearHistory={() => {
+          HistoryStorage.clearHistory();
+          setHistory([]);
+          addToast('History Cleared', 'All local transfer records removed', 'info');
+        }}
+        onRemoveEntry={(id) => {
+          HistoryStorage.removeEntry(id);
+          setHistory(HistoryStorage.getHistory());
+        }}
+      />
+
+      <FileQueueModal
+        isOpen={isQueueOpen}
+        onClose={() => setIsQueueOpen(false)}
+        queue={fileQueue}
+        targetDevice={
+          queueTargets.length === 1
+            ? peers.find((p) => p.id === queueTargets[0]) || null
+            : null
+        }
+        isAllDevices={queueTargets.length > 1}
+        peerCount={queueTargets.length}
+        onAddFiles={handleAddMoreFilesToQueue}
+        onRemoveFile={handleRemoveQueueFile}
+        onStartTransfer={handleStartQueueTransfer}
+        isTransferring={isQueueTransferring}
+      />
+
       <PreTransferModal
         isOpen={isStagingOpen}
         files={stagingFiles}
@@ -711,7 +1005,10 @@ export function App() {
         }
         isAllDevices={stagingTargets.length > 1}
         peerCount={stagingTargets.length}
-        onConfirm={handleConfirmStagedTransfer}
+        onConfirm={() => {
+          setIsStagingOpen(false);
+          setIsQueueOpen(true);
+        }}
         onCancel={() => {
           setStagingFiles([]);
           setStagingTargets([]);
@@ -727,6 +1024,7 @@ export function App() {
         onOpenJoin={() => setIsJoinOpen(true)}
         onOpenScanner={() => setIsScannerOpen(true)}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+        onOpenHistory={() => setIsHistoryOpen(true)}
         onInstallPwa={() => pwaEvent && pwaEvent.prompt()}
         pwaInstallable={!!pwaEvent}
         onLeaveRoom={() => {
@@ -749,3 +1047,4 @@ export function App() {
     </div>
   );
 }
+

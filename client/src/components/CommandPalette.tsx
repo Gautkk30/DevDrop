@@ -19,6 +19,7 @@ interface CommandPaletteProps {
   onOpenJoin: () => void;
   onOpenScanner: () => void;
   onOpenDiagnostics: () => void;
+  onOpenHistory?: () => void;
   onInstallPwa?: () => void;
   pwaInstallable?: boolean;
   onLeaveRoom?: () => void;
@@ -32,6 +33,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenJoin,
   onOpenScanner,
   onOpenDiagnostics,
+  onOpenHistory,
   onInstallPwa,
   pwaInstallable,
   onLeaveRoom,
@@ -74,6 +76,21 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
               onOpenJoin();
             },
             shortcut: 'J',
+          },
+        ]
+      : []),
+    ...(onOpenHistory
+      ? [
+          {
+            id: 'history',
+            title: 'Recent Transfers',
+            subtitle: 'View local session transfer history',
+            icon: <Activity className="w-4 h-4 text-emerald-600" />,
+            action: () => {
+              onClose();
+              onOpenHistory();
+            },
+            shortcut: 'H',
           },
         ]
       : []),
