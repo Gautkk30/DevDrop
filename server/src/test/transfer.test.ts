@@ -1,4 +1,5 @@
-import crypto from 'crypto';
+import crypto from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
 // Replicating TransferEngine framing logic in Node test
 class TransferEngineTester {

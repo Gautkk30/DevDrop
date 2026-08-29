@@ -1,6 +1,6 @@
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { RoomManager } from '../room/RoomManager.js';
-import { SignalingMessage, DeviceInfo } from '../shared/types.js';
+import { SignalingMessage } from '../shared/types.js';
 
 export class SignalingServer {
   private wsToDeviceId: Map<WebSocket, string> = new Map();
@@ -11,12 +11,13 @@ export class SignalingServer {
 
   private init() {
     this.wss.on('connection', (ws: WebSocket) => {
-      ws.on('message', (data: Buffer | string) => {
+      ws.on('message', (data: RawData) => {
         try {
           const message: SignalingMessage = JSON.parse(data.toString());
           this.handleMessage(ws, message);
-        } catch (err: any) {
-          this.sendError(ws, 'INVALID_JSON', 'Failed to parse signaling message: ' + err.message);
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          this.sendError(ws, 'INVALID_JSON', 'Failed to parse signaling message: ' + errorMsg);
         }
       });
 
@@ -24,7 +25,7 @@ export class SignalingServer {
         this.handleDisconnect(ws);
       });
 
-      ws.on('error', (err) => {
+      ws.on('error', (err: Error) => {
         console.error('[SignalingServer] WebSocket error:', err);
         this.handleDisconnect(ws);
       });
@@ -65,8 +66,9 @@ export class SignalingServer {
               },
             })
           );
-        } catch (err: any) {
-          this.sendError(ws, 'CREATE_FAILED', err.message);
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          this.sendError(ws, 'CREATE_FAILED', errorMsg);
         }
         break;
       }
@@ -102,8 +104,9 @@ export class SignalingServer {
             senderDeviceId: device.id,
             payload: { device, room },
           });
-        } catch (err: any) {
-          this.sendError(ws, 'JOIN_FAILED', err.message);
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          this.sendError(ws, 'JOIN_FAILED', errorMsg);
         }
         break;
       }
