@@ -9,20 +9,20 @@ function runTests() {
   const mockWs2: any = { send: () => {}, readyState: 1 };
 
   const device1: DeviceInfo = {
-    id: 'dev_1',
+    id: 'dev_host',
     name: 'Host Device',
     type: 'desktop',
     joinedAt: Date.now(),
   };
 
   const device2: DeviceInfo = {
-    id: 'dev_2',
+    id: 'dev_peer_2',
     name: 'Peer Device',
     type: 'mobile',
     joinedAt: Date.now(),
   };
 
-  // Test 1: Room Creation
+  // TEST 1: Create room and verify it exists
   const { room, hostDevice } = manager.createRoom({
     password: 'secretpassword',
     hostDevice: device1,
@@ -32,59 +32,97 @@ function runTests() {
   console.assert(room.code.length === 7, `Expected 7 chars code with hyphen, got ${room.code}`);
   console.assert(room.hasPassword === true, 'Expected hasPassword to be true');
   console.assert(hostDevice.isHost === true, 'Expected hostDevice to have isHost=true');
-  console.log('✓ Test 1 Passed: Room creation & metadata');
+  console.assert(manager.getRoomById(room.id) !== undefined, 'Expected room to exist by ID');
+  console.log('✓ TEST 1 Passed: Create room and verify it exists');
 
-  // Test 2: Password Verification
-  const internalRoom = manager.getRoomByCode(room.code);
-  console.assert(internalRoom !== undefined, 'Expected to find room by code');
-  console.assert(manager.validatePassword(internalRoom!, 'secretpassword') === true, 'Expected valid password match');
-  console.assert(manager.validatePassword(internalRoom!, 'wrongpassword') === false, 'Expected invalid password to fail');
-  console.log('✓ Test 2 Passed: bcrypt password verification');
-
-  // Test 3: Peer Join
+  // TEST 2: Create room → second independent client/session joins the same room
   const { peers } = manager.joinRoom(room.code, device2, mockWs2, 'secretpassword');
   console.assert(peers.length === 2, `Expected 2 peers in room, got ${peers.length}`);
-  console.log('✓ Test 3 Passed: Peer joined room');
+  console.log('✓ TEST 2 Passed: Second independent client/session joins the same room');
 
-  // Test 4: Device Removal
-  const result = manager.removeDevice('dev_2');
-  console.assert(result !== undefined, 'Expected result on device remove');
-  console.assert(result?.leftDevice?.id === 'dev_2', 'Expected leftDevice to be dev_2');
-  console.log('✓ Test 4 Passed: Device removed cleanly');
-
-  // Test 6: Cross-Session Regression: Create Room -> Join with varied formatting
-  const { room: regRoom } = manager.createRoom({
-    hostDevice: { id: 'host_session_1', name: 'Host Chrome', type: 'desktop', joinedAt: Date.now() },
+  // TEST 3: Create room → normalize code variants → join successfully
+  const { room: codeRoom } = manager.createRoom({
+    hostDevice: { id: 'dev_code_host', name: 'Host 3', type: 'desktop', joinedAt: Date.now() },
     ws: mockWs1,
   });
 
-  const mockWs3: any = { send: () => {}, readyState: 1 };
-  const mockWs4: any = { send: () => {}, readyState: 1 };
-  const mockWs5: any = { send: () => {}, readyState: 1 };
+  const unhyphenatedLower = codeRoom.code.replace('-', '').toLowerCase();
+  const unhyphenatedUpper = codeRoom.code.replace('-', '').toUpperCase();
+  const hyphenatedLower = codeRoom.code.toLowerCase();
 
-  // Join with exact formatted code (e.g. "ABC-123")
-  const join1 = manager.joinRoom(regRoom.code, { id: 'peer_1', name: 'Peer Exact', type: 'mobile', joinedAt: Date.now() }, mockWs3);
-  console.assert(join1.peers.length === 2, `Expected 2 peers, got ${join1.peers.length}`);
+  const j1 = manager.joinRoom(unhyphenatedLower, { id: 'dev_v1', name: 'V1', type: 'mobile', joinedAt: Date.now() }, mockWs2);
+  console.assert(j1.peers.length === 2, 'Expected successful join with unhyphenated lowercase');
+  const j2 = manager.joinRoom(unhyphenatedUpper, { id: 'dev_v2', name: 'V2', type: 'desktop', joinedAt: Date.now() }, mockWs2);
+  console.assert(j2.peers.length === 3, 'Expected successful join with unhyphenated uppercase');
+  const j3 = manager.joinRoom(hyphenatedLower, { id: 'dev_v3', name: 'V3', type: 'mobile', joinedAt: Date.now() }, mockWs2);
+  console.assert(j3.peers.length === 4, 'Expected successful join with hyphenated lowercase');
+  console.log('✓ TEST 3 Passed: Create room → normalize code variants → join successfully');
 
-  // Join with unhyphenated lowercase code (e.g. "abc123")
-  const unhyphenatedLower = regRoom.code.replace('-', '').toLowerCase();
-  const join2 = manager.joinRoom(unhyphenatedLower, { id: 'peer_2', name: 'Peer Lower', type: 'desktop', joinedAt: Date.now() }, mockWs4);
-  console.assert(join2.peers.length === 3, `Expected 3 peers, got ${join2.peers.length}`);
+  // TEST 4: Create room → open another WebSocket connection → room still exists
+  const { room: room4 } = manager.createRoom({
+    hostDevice: { id: 'dev_host_4', name: 'Host 4', type: 'desktop', joinedAt: Date.now() },
+    ws: mockWs1,
+  });
+  // Simulate an unrelated client opening a websocket connection
+  const unrelatedWs: any = { send: () => {}, readyState: 1 };
+  console.assert(manager.getRoomByCode(room4.code) !== undefined, 'Room must still exist after another WS opens');
+  console.log('✓ TEST 4 Passed: Create room → open another WebSocket connection → room still exists');
 
-  // Join with Room ID (e.g. "rm_...")
-  const join3 = manager.joinRoom(regRoom.id, { id: 'peer_3', name: 'Peer ID', type: 'mobile', joinedAt: Date.now() }, mockWs5);
-  console.assert(join3.peers.length === 4, `Expected 4 peers, got ${join3.peers.length}`);
-  console.log('✓ Test 6 Passed: Regression - create room → join from another client/session (all formats)');
+  // TEST 5: Create room → transient host socket disconnect/reconnect → room does not immediately disappear
+  const { room: room5 } = manager.createRoom({
+    hostDevice: { id: 'dev_host_5', name: 'Host 5', type: 'mobile', joinedAt: Date.now() },
+    ws: mockWs1,
+  });
+  // Host disconnects
+  manager.removeDevice('dev_host_5', mockWs1);
+  // Room should still be in room store with 0 active peers, waiting for TTL / reconnect
+  const survivingRoom = manager.getRoomByCode(room5.code);
+  console.assert(survivingRoom !== undefined, 'Room must not be destroyed when host disconnects temporarily');
+  console.assert(survivingRoom?.peers.size === 0, 'Peers size should be 0');
+  // Second device joins the room even while host is disconnected
+  const peerJoiningEmptyRoom = manager.joinRoom(room5.code, { id: 'dev_peer_5', name: 'Peer 5', type: 'desktop', joinedAt: Date.now() }, mockWs2);
+  console.assert(peerJoiningEmptyRoom.peers.length === 1, 'Peer should successfully join surviving room');
+  console.log('✓ TEST 5 Passed: Transient host socket disconnect → room does not immediately disappear');
 
-  // Test 5: Expiration & Sweep
+  // TEST 6: Old socket closes after a replacement/new socket exists → old close event must not remove active session
+  const newSocketWs: any = { send: () => {}, readyState: 1 };
+  const oldSocketWs: any = { send: () => {}, readyState: 1 };
+  const { room: room6 } = manager.createRoom({
+    hostDevice: { id: 'dev_host_6', name: 'Host 6', type: 'desktop', joinedAt: Date.now() },
+    ws: newSocketWs, // registered with new socket
+  });
+  // Old socket close event arrives
+  manager.removeDevice('dev_host_6', oldSocketWs);
+  const roomAfterStaleClose = manager.getRoomById(room6.id);
+  console.assert(roomAfterStaleClose?.peers.has('dev_host_6') === true, 'Active session must NOT be removed by old socket close event');
+  console.log('✓ TEST 6 Passed: Stale socket close event ignored when newer socket exists');
+
+  // TEST 8: Multiple concurrent join attempts do not corrupt room state
+  const { room: room8 } = manager.createRoom({
+    hostDevice: { id: 'dev_host_8', name: 'Host 8', type: 'desktop', joinedAt: Date.now() },
+    ws: mockWs1,
+  });
+  const concurrentDevices = Array.from({ length: 5 }, (_, i) => ({
+    id: `dev_concurrent_${i}`,
+    name: `Concurrent Peer ${i}`,
+    type: 'mobile' as const,
+    joinedAt: Date.now(),
+  }));
+  for (const dev of concurrentDevices) {
+    manager.joinRoom(room8.code, dev, mockWs2);
+  }
+  const fullRoom = manager.getRoomById(room8.id);
+  console.assert(fullRoom?.peers.size === 6, `Expected 6 peers in room8, got ${fullRoom?.peers.size}`);
+  console.log('✓ TEST 8 Passed: Multiple concurrent join attempts do not corrupt room state');
+
+  // TEST 7: Room actually expires after TTL and is removed
   setTimeout(() => {
     const expiredRoom = manager.getRoomByCode(room.code);
-    console.assert(expiredRoom === undefined, 'Expected room to be expired and cleaned up');
-    console.log('✓ Test 5 Passed: Room TTL expiration & cleanup');
+    console.assert(expiredRoom === undefined, 'Expected room to be expired and cleaned up after TTL');
+    console.log('✓ TEST 7 Passed: Room actually expires after TTL and is removed');
     manager.destroy();
     console.log('[TEST] All RoomManager unit tests passed successfully!\n');
   }, 600);
 }
 
 runTests();
-

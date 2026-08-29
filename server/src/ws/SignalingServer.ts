@@ -184,7 +184,7 @@ export class SignalingServer {
     if (!deviceId) return;
 
     this.wsToDeviceId.delete(ws);
-    const result = this.roomManager.removeDevice(deviceId);
+    const result = this.roomManager.removeDevice(deviceId, ws);
 
     if (result && result.roomId && result.leftDevice) {
       // Notify remaining peers that device left

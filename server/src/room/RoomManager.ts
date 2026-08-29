@@ -26,7 +26,7 @@ export class RoomManager {
   private cleanupInterval: NodeJS.Timeout;
 
   constructor(private defaultTtlMs: number = 15 * 60 * 1000) {
-    console.log(`[ROOM DEBUG] [${this.instanceId}] RoomManager initialized (defaultTTL=${this.defaultTtlMs}ms)`);
+    console.log(`[ROOM DEBUG] RoomManager initialized instance=${this.instanceId}`);
     // Run cleanup sweep every 30 seconds
     this.cleanupInterval = setInterval(() => this.sweepExpiredRooms(), 30 * 1000);
   }
@@ -80,9 +80,9 @@ export class RoomManager {
     this.codeToRoomId.set(normalizedCode, roomId);
     this.deviceToRoomId.set(options.hostDevice.id, roomId);
 
-    console.log(`[ROOM DEBUG] [${this.instanceId}] CREATE requested by device=${options.hostDevice.id} (${options.hostDevice.name})`);
-    console.log(`[ROOM DEBUG] [${this.instanceId}] CREATED room=${roomId} code=${code} (normalized=${normalizedCode})`);
-    console.log(`[ROOM DEBUG] [${this.instanceId}] roomStore contains=${this.rooms.has(roomId)}, totalRooms=${this.rooms.size}`);
+    console.log(`[ROOM DEBUG] CREATE requested instance=${this.instanceId} device=${options.hostDevice.id}`);
+    console.log(`[ROOM DEBUG] CREATED instance=${this.instanceId} room=${roomId} code=${code}`);
+    console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
 
     return {
       room: this.toPublicMetadata(room),
@@ -124,22 +124,14 @@ export class RoomManager {
   ): { room: RoomMetadata; peers: DeviceInfo[] } {
     const rawInput = roomIdOrCode.trim();
     const normalizedInput = RoomManager.normalizeCode(rawInput);
-    const isContained =
-      this.rooms.has(rawInput) ||
-      this.codeToRoomId.has(rawInput.toUpperCase()) ||
-      this.codeToRoomId.has(normalizedInput);
 
-    console.log(`[ROOM DEBUG] [${this.instanceId}] JOIN requested room="${rawInput}" (normalized="${normalizedInput}") by device=${device.id} (${device.name})`);
-    console.log(`[ROOM DEBUG] [${this.instanceId}] roomStore contains=${isContained}`);
-    console.log(
-      `[ROOM DEBUG] [${this.instanceId}] availableRooms=[${Array.from(this.rooms.values())
-        .map((r) => `${r.code} (${r.id})`)
-        .join(', ')}]`
-    );
+    console.log(`[ROOM DEBUG] JOIN requested instance=${this.instanceId} room=${rawInput} device=${device.id}`);
+    console.log(`[ROOM DEBUG] JOIN lookup instance=${this.instanceId} normalized=${normalizedInput}`);
 
     let room = this.getRoomByCode(rawInput) || this.getRoomById(rawInput) || this.getRoomByCode(normalizedInput);
 
     if (!room) {
+      console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
       console.warn(`[ROOM DEBUG] [${this.instanceId}] JOIN_FAILED: Room "${rawInput}" not found among ${this.rooms.size} active rooms.`);
       throw new Error('Room not found or expired');
     }
@@ -148,15 +140,16 @@ export class RoomManager {
       throw new Error('Invalid room password');
     }
 
+    const isHost = room.hostDeviceId === device.id;
     const peer: RoomPeer = {
-      device: { ...device, isHost: false },
+      device: { ...device, isHost },
       ws,
     };
 
     room.peers.set(device.id, peer);
     this.deviceToRoomId.set(device.id, room.id);
 
-    console.log(`[ROOM DEBUG] [${this.instanceId}] JOINED successfully: device=${device.id} into room=${room.code} (${room.id}). Total peers=${room.peers.size}`);
+    console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
 
     const publicPeers = Array.from(room.peers.values()).map((p) => p.device);
 
@@ -166,25 +159,34 @@ export class RoomManager {
     };
   }
 
-  public removeDevice(deviceId: string): { roomId: string; room?: RoomMetadata; leftDevice?: DeviceInfo } | undefined {
+  public removeDevice(deviceId: string, ws?: WebSocket): { roomId: string; room?: RoomMetadata; leftDevice?: DeviceInfo } | undefined {
     const roomId = this.deviceToRoomId.get(deviceId);
     if (!roomId) return undefined;
 
-    this.deviceToRoomId.delete(deviceId);
     const room = this.rooms.get(roomId);
-    if (!room) return undefined;
+    if (!room) {
+      this.deviceToRoomId.delete(deviceId);
+      return undefined;
+    }
 
     const peer = room.peers.get(deviceId);
+    // If a specific ws was provided and it doesn't match the current peer's active ws, do NOT remove the peer
+    if (ws && peer && peer.ws !== ws) {
+      console.log(`[ROOM DEBUG] [${this.instanceId}] Ignoring disconnect from stale/previous socket for device=${deviceId}`);
+      return undefined;
+    }
+
+    this.deviceToRoomId.delete(deviceId);
     const leftDevice = peer?.device;
     room.peers.delete(deviceId);
 
-    console.log(`[ROOM DEBUG] [${this.instanceId}] Removed device=${deviceId} from room=${roomId} (${room.code}). Remaining peers=${room.peers.size}`);
+    console.log(`[ROOM DEBUG] REMOVE_DEVICE instance=${this.instanceId} device=${deviceId} room=${roomId} reason=peer_disconnect`);
+    console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
 
-    // If no peers left in room, close and sweep it
-    if (room.peers.size === 0) {
-      this.closeRoom(roomId, 'ALL_PEERS_LEFT');
-      return { roomId, leftDevice };
-    }
+    // NOTE: The room is NOT destroyed when peers.size === 0.
+    // Rooms are preserved for their configured TTL so that devices can reconnect across
+    // momentary network drops or mobile backgrounding.
+    // Cleanup occurs when Date.now() > room.expiresAt or when closeRoom is explicitly invoked.
 
     return {
       roomId,
@@ -197,7 +199,7 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return;
 
-    console.log(`[ROOM DEBUG] [${this.instanceId}] Closing room=${roomId} (${room.code}) reason="${reason}"`);
+    console.log(`[ROOM DEBUG] ROOM_DESTROYED instance=${this.instanceId} room=${roomId} reason=${reason}`);
 
     // Notify all remaining peers
     for (const peer of room.peers.values()) {
@@ -218,6 +220,7 @@ export class RoomManager {
     this.codeToRoomId.delete(room.code.toUpperCase());
     this.codeToRoomId.delete(RoomManager.normalizeCode(room.code));
     this.rooms.delete(roomId);
+    console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
   }
 
   public getRoomForDevice(deviceId: string): InternalRoom | undefined {
