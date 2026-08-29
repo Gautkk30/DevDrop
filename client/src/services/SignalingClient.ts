@@ -10,7 +10,15 @@ export class SignalingClient {
   private signalingUrl: string;
 
   constructor(url?: string) {
-    this.signalingUrl = url || import.meta.env.VITE_SIGNALING_URL || 'ws://localhost:3001/ws';
+    if (url) {
+      this.signalingUrl = url;
+    } else if (import.meta.env.VITE_SIGNALING_URL) {
+      this.signalingUrl = import.meta.env.VITE_SIGNALING_URL;
+    } else if (import.meta.env.PROD) {
+      this.signalingUrl = 'wss://devdrop-server.onrender.com/ws';
+    } else {
+      this.signalingUrl = 'ws://localhost:3001/ws';
+    }
   }
 
   public connect(): Promise<void> {

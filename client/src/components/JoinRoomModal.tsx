@@ -41,7 +41,12 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
     if (cleanCode.length < 6) return;
 
     try {
-      const res = await fetch(`/api/room/validate/${cleanCode}`);
+      const apiBase =
+        import.meta.env.VITE_API_URL ||
+        import.meta.env.VITE_SIGNALING_URL?.replace(/^ws(s?):/, 'http$1:').replace(/\/ws$/, '') ||
+        (import.meta.env.PROD ? 'https://devdrop-server.onrender.com' : 'http://localhost:3001');
+
+      const res = await fetch(`${apiBase}/api/room/validate/${cleanCode}`);
       if (res.ok) {
         const data = await res.json();
         setRequiresPassword(data.hasPassword);
