@@ -292,6 +292,12 @@ export function App() {
       }
     });
 
+    const unsubRoomError = signalingClient.on('ROOM_ERROR', (msg) => {
+      if (msg.error) {
+        addToast('Room Error', msg.error, 'error');
+      }
+    });
+
     const unsubExpired = signalingClient.on('ROOM_EXPIRED', () => {
       setRoom(null);
       setPeers([]);
@@ -314,6 +320,7 @@ export function App() {
       unsubTransferOffer();
       unsubTransferAccept();
       unsubTransferCancel();
+      unsubRoomError();
       unsubExpired();
     };
   }, [currentDevice, addToast]);
@@ -500,22 +507,31 @@ export function App() {
     setTransfers(Array.from(activeTransfersMap.current.values()));
   };
 
-  const handleCreateRoom = (options: { deviceName: string; deviceType: any; platformDescription?: string; password?: string; isOneTime: boolean }) => {
+  const handleCreateRoom = async (options: { deviceName: string; deviceType: any; platformDescription?: string; password?: string; isOneTime: boolean }) => {
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
-    signalingClient.send({
-      protocolVersion: 1,
-      type: 'ROOM_CREATE',
-      payload: {
-        password: options.password,
-        isOneTime: options.isOneTime,
-        device: {
-          id: deviceId,
-          name: options.deviceName,
-          type: options.deviceType,
-          platformDescription: options.platformDescription,
+    try {
+      if (!signalingClient.isConnected()) {
+        addToast('Connecting', 'Connecting to signaling server...', 'info');
+      }
+      await signalingClient.ensureConnected(15000);
+      signalingClient.send({
+        protocolVersion: 1,
+        type: 'ROOM_CREATE',
+        payload: {
+          password: options.password,
+          isOneTime: options.isOneTime,
+          device: {
+            id: deviceId,
+            name: options.deviceName,
+            type: options.deviceType,
+            platformDescription: options.platformDescription,
+          },
         },
-      },
-    });
+      });
+    } catch (err: any) {
+      console.error('[App] Failed to connect for ROOM_CREATE:', err);
+      addToast('Connection Failed', 'Could not reach DevDrop signaling server. Please check your network and try again.', 'error');
+    }
   };
 
   const handleQuickSend = (files: File[]) => {
@@ -529,22 +545,31 @@ export function App() {
     addToast('Quick Send Started', 'Room created. Share QR or link to send files.', 'info');
   };
 
-  const handleJoinRoom = (options: { roomCode: string; deviceName: string; deviceType: any; platformDescription?: string; password?: string }) => {
+  const handleJoinRoom = async (options: { roomCode: string; deviceName: string; deviceType: any; platformDescription?: string; password?: string }) => {
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
-    signalingClient.send({
-      protocolVersion: 1,
-      type: 'ROOM_JOIN',
-      payload: {
-        roomCode: options.roomCode,
-        password: options.password,
-        device: {
-          id: deviceId,
-          name: options.deviceName,
-          type: options.deviceType,
-          platformDescription: options.platformDescription,
+    try {
+      if (!signalingClient.isConnected()) {
+        addToast('Connecting', 'Connecting to signaling server...', 'info');
+      }
+      await signalingClient.ensureConnected(15000);
+      signalingClient.send({
+        protocolVersion: 1,
+        type: 'ROOM_JOIN',
+        payload: {
+          roomCode: options.roomCode,
+          password: options.password,
+          device: {
+            id: deviceId,
+            name: options.deviceName,
+            type: options.deviceType,
+            platformDescription: options.platformDescription,
+          },
         },
-      },
-    });
+      });
+    } catch (err: any) {
+      console.error('[App] Failed to connect for ROOM_JOIN:', err);
+      addToast('Connection Failed', 'Could not reach DevDrop signaling server. Please check your network and try again.', 'error');
+    }
   };
 
   const handleSendFile = async (file: File, targetDeviceIds: string[]) => {
