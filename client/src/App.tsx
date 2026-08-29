@@ -513,7 +513,7 @@ export function App() {
       if (!signalingClient.isConnected()) {
         addToast('Connecting', 'Connecting to signaling server...', 'info');
       }
-      await signalingClient.ensureConnected(15000);
+      await signalingClient.ensureConnected();
       signalingClient.send({
         protocolVersion: 1,
         type: 'ROOM_CREATE',
@@ -530,6 +530,7 @@ export function App() {
       });
     } catch (err: any) {
       console.error('[App] Failed to connect for ROOM_CREATE:', err);
+      signalingClient.clearPendingRoomRequests();
       addToast('Connection Failed', 'Could not reach DevDrop signaling server. Please check your network and try again.', 'error');
     }
   };
@@ -551,7 +552,7 @@ export function App() {
       if (!signalingClient.isConnected()) {
         addToast('Connecting', 'Connecting to signaling server...', 'info');
       }
-      await signalingClient.ensureConnected(15000);
+      await signalingClient.ensureConnected();
       signalingClient.send({
         protocolVersion: 1,
         type: 'ROOM_JOIN',
@@ -568,6 +569,7 @@ export function App() {
       });
     } catch (err: any) {
       console.error('[App] Failed to connect for ROOM_JOIN:', err);
+      signalingClient.clearPendingRoomRequests();
       addToast('Connection Failed', 'Could not reach DevDrop signaling server. Please check your network and try again.', 'error');
     }
   };

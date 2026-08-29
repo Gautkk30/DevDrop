@@ -104,14 +104,34 @@ export class SignalingClient {
     return this.connectPromise;
   }
 
-  public async ensureConnected(timeoutMs = 15000): Promise<void> {
+  public async ensureConnected(timeoutMs?: number): Promise<void> {
     if (this.isConnected()) return;
 
+    const actualTimeout = timeoutMs ?? (import.meta.env.PROD ? 75000 : 15000);
+
+    let timer: ReturnType<typeof setTimeout>;
     const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => reject(new Error('Signaling server connection timeout')), timeoutMs);
+      timer = setTimeout(() => {
+        this.clearPendingRoomRequests();
+        reject(new Error(`Signaling server connection timeout (${actualTimeout / 1000}s)`));
+      }, actualTimeout);
     });
 
-    return Promise.race([this.connect(), timeoutPromise]);
+    try {
+      await Promise.race([this.connect(), timeoutPromise]);
+    } finally {
+      clearTimeout(timer!);
+    }
+  }
+
+  public clearPendingRoomRequests(): void {
+    const prevCount = this.outgoingQueue.length;
+    this.outgoingQueue = this.outgoingQueue.filter(
+      (m) => m.type !== 'ROOM_CREATE' && m.type !== 'ROOM_JOIN'
+    );
+    if (prevCount !== this.outgoingQueue.length) {
+      console.log('[SignalingClient] Cleared pending room requests from queue.');
+    }
   }
 
   public send(message: SignalingMessage): void {
