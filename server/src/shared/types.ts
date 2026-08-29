@@ -60,6 +60,8 @@ export type SignalingMessageType =
   | 'ROOM_JOINED'
   | 'ROOM_ERROR'
   | 'ROOM_EXPIRED'
+  | 'ROOM_QUERY'
+  | 'ROOM_INFO'
   | 'PEER_JOINED'
   | 'PEER_LEFT'
   | 'SIGNAL_OFFER'

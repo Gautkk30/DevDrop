@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import os from 'os';
 import { RoomManager } from '../room/RoomManager.js';
 
 export function createHealthRouter(roomManager: RoomManager) {
@@ -10,6 +11,10 @@ export function createHealthRouter(roomManager: RoomManager) {
       service: 'DevDrop Ephemeral Signaling Server',
       timestamp: new Date().toISOString(),
       uptimeSeconds: process.uptime(),
+      pid: process.pid,
+      host: os.hostname(),
+      instance: roomManager.getInstanceId(),
+      activeRooms: roomManager.getRoomCount(),
     });
   });
 
@@ -21,6 +26,9 @@ export function createHealthRouter(roomManager: RoomManager) {
       return res.status(404).json({
         valid: false,
         error: 'Room not found or expired',
+        pid: process.pid,
+        instance: roomManager.getInstanceId(),
+        activeRooms: roomManager.getRoomCount(),
       });
     }
 
@@ -30,6 +38,8 @@ export function createHealthRouter(roomManager: RoomManager) {
       hasPassword: !!room.passwordHash,
       deviceCount: room.peers.size,
       expiresAt: room.expiresAt,
+      pid: process.pid,
+      instance: roomManager.getInstanceId(),
     });
   });
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { LogIn, X, Lock, QrCode } from 'lucide-react';
 import type { DeviceType } from '../shared/types.js';
 import { DeviceIdentifier } from '../services/DeviceIdentifier.js';
+import { signalingClient } from '../services/SignalingClient.js';
 
 interface JoinRoomModalProps {
   isOpen: boolean;
@@ -36,27 +37,27 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
 
   if (!isOpen) return null;
 
+  /**
+   * Query room metadata via WebSocket — NOT via HTTP.
+   * This avoids triggering an HTTP cold-start on Render that would create a
+   * fresh process with no rooms before Device B's WebSocket ROOM_JOIN arrives.
+   * The existing WebSocket connection (maintained by Device A's heartbeat pings)
+   * keeps the Render process alive and its in-memory room state intact.
+   */
   const checkRoomMetadata = async (code: string) => {
-    const cleanCode = code.trim().toUpperCase();
+    const cleanCode = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (cleanCode.length < 6) return;
 
     try {
-      const apiBase =
-        import.meta.env.VITE_API_URL ||
-        import.meta.env.VITE_SIGNALING_URL?.replace(/^ws(s?):/, 'http$1:').replace(/\/ws$/, '') ||
-        (import.meta.env.PROD ? 'https://devdrop-server.onrender.com' : 'http://localhost:3001');
-
-      const res = await fetch(`${apiBase}/api/room/validate/${cleanCode}`);
-      if (res.ok) {
-        const data = await res.json();
-        setRequiresPassword(data.hasPassword);
+      const info = await signalingClient.queryRoom(cleanCode);
+      if (info) {
+        setRequiresPassword(info.hasPassword);
         setErrorMsg('');
-      } else {
-        const data = await res.json();
-        setErrorMsg(data.error || 'Room not found');
       }
-    } catch (e) {
-      // ignore fetch error offline
+      // If info is null, the room may not exist yet or we're offline — don't show error
+      // The ROOM_JOIN will surface the real error response
+    } catch {
+      // Ignore — ROOM_JOIN will handle actual validation
     }
   };
 
@@ -70,6 +71,7 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
       checkRoomMetadata(val);
     }
   };
+
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

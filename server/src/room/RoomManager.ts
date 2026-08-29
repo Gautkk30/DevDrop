@@ -35,6 +35,10 @@ export class RoomManager {
     return this.instanceId;
   }
 
+  public getRoomCount(): number {
+    return this.rooms.size;
+  }
+
   public static normalizeCode(code: string): string {
     return code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
   }

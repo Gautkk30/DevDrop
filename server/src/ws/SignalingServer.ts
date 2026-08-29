@@ -1,9 +1,11 @@
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
+import os from 'os';
 import { RoomManager } from '../room/RoomManager.js';
 import { SignalingMessage } from '../shared/types.js';
 
 export class SignalingServer {
   private wsToDeviceId: Map<WebSocket, string> = new Map();
+  private wsConnCount = 0;
 
   constructor(private wss: WebSocketServer, private roomManager: RoomManager) {
     this.init();
@@ -11,6 +13,9 @@ export class SignalingServer {
 
   private init() {
     this.wss.on('connection', (ws: WebSocket) => {
+      const connId = ++this.wsConnCount;
+      console.log(`[PROD DEBUG] WS_CONNECTED connId=${connId} pid=${process.pid} host=${os.hostname()} instance=${this.roomManager.getInstanceId()} activeRooms=${this.roomManager.getRoomCount()}`);
+
       ws.on('message', (data: RawData) => {
         try {
           const message: SignalingMessage = JSON.parse(data.toString());
@@ -22,6 +27,7 @@ export class SignalingServer {
       });
 
       ws.on('close', () => {
+        console.log(`[PROD DEBUG] WS_DISCONNECTED connId=${connId} pid=${process.pid} instance=${this.roomManager.getInstanceId()}`);
         this.handleDisconnect(ws);
       });
 
@@ -38,6 +44,32 @@ export class SignalingServer {
         ws.send(JSON.stringify({ type: 'PONG' }));
         break;
 
+      case 'ROOM_QUERY': {
+        const { roomCode } = msg.payload || {};
+        if (!roomCode) {
+          return this.sendError(ws, 'BAD_REQUEST', 'Missing room code');
+        }
+        const room = this.roomManager.getRoomByCode(roomCode);
+        if (!room) {
+          ws.send(JSON.stringify({
+            type: 'ROOM_ERROR',
+            error: 'Room not found or expired',
+            payload: { code: roomCode },
+          }));
+        } else {
+          ws.send(JSON.stringify({
+            type: 'ROOM_INFO',
+            payload: {
+              code: room.code,
+              hasPassword: !!room.passwordHash,
+              deviceCount: room.peers.size,
+              expiresAt: room.expiresAt,
+            },
+          }));
+        }
+        break;
+      }
+
       case 'ROOM_CREATE': {
         const { password, isOneTime, device } = msg.payload || {};
         if (!device || !device.id || !device.name) {
@@ -53,6 +85,8 @@ export class SignalingServer {
           });
 
           this.wsToDeviceId.set(ws, device.id);
+
+          console.log(`[PROD DEBUG] ROOM_CREATED pid=${process.pid} host=${os.hostname()} instance=${this.roomManager.getInstanceId()} room=${room.id} code=${room.code} device=${device.id}`);
 
           ws.send(
             JSON.stringify({
@@ -78,6 +112,8 @@ export class SignalingServer {
         if (!roomCode || !device || !device.id) {
           return this.sendError(ws, 'BAD_REQUEST', 'Missing room code or device info');
         }
+
+        console.log(`[PROD DEBUG] ROOM_JOIN pid=${process.pid} host=${os.hostname()} instance=${this.roomManager.getInstanceId()} code=${roomCode} device=${device.id} activeRooms=${this.roomManager.getRoomCount()}`);
 
         try {
           const { room, peers } = this.roomManager.joinRoom(roomCode, device, ws, password);

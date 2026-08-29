@@ -1,4 +1,5 @@
 import http from 'http';
+import os from 'os';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -25,10 +26,12 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 new SignalingServer(wss, roomManager);
 
 server.listen(PORT, () => {
+  const host = os.hostname();
   console.log(`=======================================================`);
   console.log(`  DevDrop Ephemeral Signaling Server Listening on :${PORT}`);
   console.log(`  WebSocket Endpoint: ws://localhost:${PORT}/ws`);
   console.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`  pid=${process.pid} host=${host} instance=${roomManager.getInstanceId()}`);
   console.log(`=======================================================`);
 });
 
@@ -42,4 +45,13 @@ const handleShutdown = () => {
 
 process.on('SIGTERM', handleShutdown);
 process.on('SIGINT', handleShutdown);
+
+// Prevent unhandled rejections from crashing the process and losing all room state
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled promise rejection (process preserved):', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught exception (process preserved):', err);
+});
 

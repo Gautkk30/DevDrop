@@ -134,6 +134,48 @@ export class SignalingClient {
     }
   }
 
+  /**
+   * Query room metadata via WebSocket (no HTTP — keeps Render from cold-starting).
+   * Returns { hasPassword, deviceCount, code } on success, or null if room not found.
+   */
+  public async queryRoom(roomCode: string, timeoutMs = 8000): Promise<{ hasPassword: boolean; deviceCount: number; code: string } | null> {
+    try {
+      await this.ensureConnected(timeoutMs);
+    } catch {
+      return null; // Server offline or unreachable — skip pre-validation
+    }
+
+    return new Promise((resolve) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (!done) { done = true; unsub(); resolve(null); }
+      }, 5000);
+
+      const unsub = this.on('*', (msg) => {
+        if (done) return;
+        if (msg.type === 'ROOM_INFO' && msg.payload?.code) {
+          const normalized = msg.payload.code;
+          // Only resolve if this is for our queried code
+          if (normalized.replace(/[^A-Z0-9]/g, '') === roomCode.replace(/[^A-Z0-9]/g, '')) {
+            done = true;
+            clearTimeout(timer);
+            unsub();
+            resolve({ hasPassword: !!msg.payload.hasPassword, deviceCount: msg.payload.deviceCount ?? 0, code: msg.payload.code });
+          }
+        } else if (msg.type === 'ROOM_ERROR' && msg.payload?.code) {
+          if (msg.payload.code.replace(/[^A-Z0-9]/g, '') === roomCode.replace(/[^A-Z0-9]/g, '')) {
+            done = true;
+            clearTimeout(timer);
+            unsub();
+            resolve(null);
+          }
+        }
+      });
+
+      this.send({ type: 'ROOM_QUERY', payload: { roomCode } });
+    });
+  }
+
   public send(message: SignalingMessage): void {
     this.logOutgoingDiagnostic(message);
 
