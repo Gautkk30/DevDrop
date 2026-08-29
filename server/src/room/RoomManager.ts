@@ -19,14 +19,24 @@ export interface InternalRoom {
 }
 
 export class RoomManager {
+  private instanceId: string = 'inst_' + Math.random().toString(36).substring(2, 7);
   private rooms: Map<string, InternalRoom> = new Map(); // roomId -> InternalRoom
-  private codeToRoomId: Map<string, string> = new Map(); // upper code -> roomId
+  private codeToRoomId: Map<string, string> = new Map(); // normalized & raw code -> roomId
   private deviceToRoomId: Map<string, string> = new Map(); // deviceId -> roomId
   private cleanupInterval: NodeJS.Timeout;
 
   constructor(private defaultTtlMs: number = 15 * 60 * 1000) {
+    console.log(`[ROOM DEBUG] [${this.instanceId}] RoomManager initialized (defaultTTL=${this.defaultTtlMs}ms)`);
     // Run cleanup sweep every 30 seconds
     this.cleanupInterval = setInterval(() => this.sweepExpiredRooms(), 30 * 1000);
+  }
+
+  public getInstanceId(): string {
+    return this.instanceId;
+  }
+
+  public static normalizeCode(code: string): string {
+    return code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
   }
 
   public createRoom(options: {
@@ -62,9 +72,17 @@ export class RoomManager {
       hostDeviceId: options.hostDevice.id,
     };
 
+    const rawCodeUpper = code.toUpperCase();
+    const normalizedCode = RoomManager.normalizeCode(code);
+
     this.rooms.set(roomId, room);
-    this.codeToRoomId.set(code.toUpperCase(), roomId);
+    this.codeToRoomId.set(rawCodeUpper, roomId);
+    this.codeToRoomId.set(normalizedCode, roomId);
     this.deviceToRoomId.set(options.hostDevice.id, roomId);
+
+    console.log(`[ROOM DEBUG] [${this.instanceId}] CREATE requested by device=${options.hostDevice.id} (${options.hostDevice.name})`);
+    console.log(`[ROOM DEBUG] [${this.instanceId}] CREATED room=${roomId} code=${code} (normalized=${normalizedCode})`);
+    console.log(`[ROOM DEBUG] [${this.instanceId}] roomStore contains=${this.rooms.has(roomId)}, totalRooms=${this.rooms.size}`);
 
     return {
       room: this.toPublicMetadata(room),
@@ -73,7 +91,9 @@ export class RoomManager {
   }
 
   public getRoomByCode(code: string): InternalRoom | undefined {
-    const roomId = this.codeToRoomId.get(code.trim().toUpperCase());
+    const rawUpper = code.trim().toUpperCase();
+    const normalized = RoomManager.normalizeCode(code);
+    const roomId = this.codeToRoomId.get(rawUpper) || this.codeToRoomId.get(normalized);
     if (!roomId) return undefined;
     return this.getRoomById(roomId);
   }
@@ -102,9 +122,25 @@ export class RoomManager {
     ws: WebSocket,
     password?: string
   ): { room: RoomMetadata; peers: DeviceInfo[] } {
-    let room = this.getRoomByCode(roomIdOrCode) || this.getRoomById(roomIdOrCode);
+    const rawInput = roomIdOrCode.trim();
+    const normalizedInput = RoomManager.normalizeCode(rawInput);
+    const isContained =
+      this.rooms.has(rawInput) ||
+      this.codeToRoomId.has(rawInput.toUpperCase()) ||
+      this.codeToRoomId.has(normalizedInput);
+
+    console.log(`[ROOM DEBUG] [${this.instanceId}] JOIN requested room="${rawInput}" (normalized="${normalizedInput}") by device=${device.id} (${device.name})`);
+    console.log(`[ROOM DEBUG] [${this.instanceId}] roomStore contains=${isContained}`);
+    console.log(
+      `[ROOM DEBUG] [${this.instanceId}] availableRooms=[${Array.from(this.rooms.values())
+        .map((r) => `${r.code} (${r.id})`)
+        .join(', ')}]`
+    );
+
+    let room = this.getRoomByCode(rawInput) || this.getRoomById(rawInput) || this.getRoomByCode(normalizedInput);
 
     if (!room) {
+      console.warn(`[ROOM DEBUG] [${this.instanceId}] JOIN_FAILED: Room "${rawInput}" not found among ${this.rooms.size} active rooms.`);
       throw new Error('Room not found or expired');
     }
 
@@ -119,6 +155,8 @@ export class RoomManager {
 
     room.peers.set(device.id, peer);
     this.deviceToRoomId.set(device.id, room.id);
+
+    console.log(`[ROOM DEBUG] [${this.instanceId}] JOINED successfully: device=${device.id} into room=${room.code} (${room.id}). Total peers=${room.peers.size}`);
 
     const publicPeers = Array.from(room.peers.values()).map((p) => p.device);
 
@@ -140,9 +178,11 @@ export class RoomManager {
     const leftDevice = peer?.device;
     room.peers.delete(deviceId);
 
-    // If host left or no peers left or one-time room completed session, close room
-    if (room.peers.size === 0 || (room.isOneTime && leftDevice?.isHost)) {
-      this.closeRoom(roomId, 'HOST_LEFT');
+    console.log(`[ROOM DEBUG] [${this.instanceId}] Removed device=${deviceId} from room=${roomId} (${room.code}). Remaining peers=${room.peers.size}`);
+
+    // If no peers left in room, close and sweep it
+    if (room.peers.size === 0) {
+      this.closeRoom(roomId, 'ALL_PEERS_LEFT');
       return { roomId, leftDevice };
     }
 
@@ -156,6 +196,8 @@ export class RoomManager {
   public closeRoom(roomId: string, reason: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+
+    console.log(`[ROOM DEBUG] [${this.instanceId}] Closing room=${roomId} (${room.code}) reason="${reason}"`);
 
     // Notify all remaining peers
     for (const peer of room.peers.values()) {
@@ -174,6 +216,7 @@ export class RoomManager {
     }
 
     this.codeToRoomId.delete(room.code.toUpperCase());
+    this.codeToRoomId.delete(RoomManager.normalizeCode(room.code));
     this.rooms.delete(roomId);
   }
 
@@ -222,3 +265,4 @@ export class RoomManager {
     clearInterval(this.cleanupInterval);
   }
 }
+

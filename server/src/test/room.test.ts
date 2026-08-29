@@ -52,6 +52,30 @@ function runTests() {
   console.assert(result?.leftDevice?.id === 'dev_2', 'Expected leftDevice to be dev_2');
   console.log('✓ Test 4 Passed: Device removed cleanly');
 
+  // Test 6: Cross-Session Regression: Create Room -> Join with varied formatting
+  const { room: regRoom } = manager.createRoom({
+    hostDevice: { id: 'host_session_1', name: 'Host Chrome', type: 'desktop', joinedAt: Date.now() },
+    ws: mockWs1,
+  });
+
+  const mockWs3: any = { send: () => {}, readyState: 1 };
+  const mockWs4: any = { send: () => {}, readyState: 1 };
+  const mockWs5: any = { send: () => {}, readyState: 1 };
+
+  // Join with exact formatted code (e.g. "ABC-123")
+  const join1 = manager.joinRoom(regRoom.code, { id: 'peer_1', name: 'Peer Exact', type: 'mobile', joinedAt: Date.now() }, mockWs3);
+  console.assert(join1.peers.length === 2, `Expected 2 peers, got ${join1.peers.length}`);
+
+  // Join with unhyphenated lowercase code (e.g. "abc123")
+  const unhyphenatedLower = regRoom.code.replace('-', '').toLowerCase();
+  const join2 = manager.joinRoom(unhyphenatedLower, { id: 'peer_2', name: 'Peer Lower', type: 'desktop', joinedAt: Date.now() }, mockWs4);
+  console.assert(join2.peers.length === 3, `Expected 3 peers, got ${join2.peers.length}`);
+
+  // Join with Room ID (e.g. "rm_...")
+  const join3 = manager.joinRoom(regRoom.id, { id: 'peer_3', name: 'Peer ID', type: 'mobile', joinedAt: Date.now() }, mockWs5);
+  console.assert(join3.peers.length === 4, `Expected 4 peers, got ${join3.peers.length}`);
+  console.log('✓ Test 6 Passed: Regression - create room → join from another client/session (all formats)');
+
   // Test 5: Expiration & Sweep
   setTimeout(() => {
     const expiredRoom = manager.getRoomByCode(room.code);
@@ -63,3 +87,4 @@ function runTests() {
 }
 
 runTests();
+
