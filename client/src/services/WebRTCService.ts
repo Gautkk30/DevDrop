@@ -1,5 +1,14 @@
 import type { ConnectionType, NetworkStats, QualityRating } from '../shared/types.js';
 
+export type WebRTCState =
+  | 'NOT_CONNECTED'
+  | 'CONNECTING'
+  | 'DATA_CHANNEL_OPEN'
+  | 'READY'
+  | 'TRANSFERRING'
+  | 'FAILED'
+  | 'CLOSED';
+
 export interface PeerConnectionHandlers {
   onDataChannel?: (peerId: string, channel: RTCDataChannel) => void;
   onIceCandidate?: (peerId: string, candidate: RTCIceCandidate) => void;
@@ -13,6 +22,8 @@ export class WebRTCService {
   private statsTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
   private channelReadyResolvers: Map<string, Array<(channel: RTCDataChannel) => void>> = new Map();
   private peerHandlers: Map<string, PeerConnectionHandlers> = new Map();
+  private earlyIceCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
+  private connectionStates: Map<string, WebRTCState> = new Map();
   private iceServers: RTCIceServer[];
 
   constructor() {
@@ -63,15 +74,27 @@ export class WebRTCService {
     return !!ch && ch.readyState === 'open';
   }
 
+  public getState(peerId: string): WebRTCState {
+    return this.connectionStates.get(peerId) || 'NOT_CONNECTED';
+  }
+
+  public setState(peerId: string, state: WebRTCState): void {
+    const prev = this.getState(peerId);
+    if (prev !== state) {
+      console.log(`[WEBRTC] State change for peer ${peerId}: ${prev} → ${state}`);
+      this.connectionStates.set(peerId, state);
+    }
+  }
+
   public async waitForDataChannel(peerId: string, timeoutMs = 15000): Promise<RTCDataChannel> {
     const existing = this.dataChannels.get(peerId);
     if (existing && existing.readyState === 'open') {
-      console.log(`[WebRTC:${peerId}] waitForDataChannel: DataChannel is already OPEN`);
+      this.setState(peerId, 'DATA_CHANNEL_OPEN');
       return existing;
     }
 
     console.log(
-      `[WebRTC:${peerId}] waitForDataChannel: waiting up to ${timeoutMs}ms for DataChannel to reach OPEN state (current state: ${existing ? existing.readyState : 'NONE'})`
+      `[WEBRTC] waitForDataChannel: waiting up to ${timeoutMs}ms for peer ${peerId} DataChannel to reach open state (current: ${existing ? existing.readyState : 'none'})`
     );
 
     return new Promise((resolve, reject) => {
@@ -79,7 +102,8 @@ export class WebRTCService {
 
       const onOpenHandler = (channel: RTCDataChannel) => {
         if (timer) clearTimeout(timer);
-        console.log(`[WebRTC:${peerId}] waitForDataChannel: successfully reached OPEN state (label="${channel.label}")`);
+        this.setState(peerId, 'DATA_CHANNEL_OPEN');
+        console.log(`[WEBRTC] DATA_CHANNEL_OPEN peer=${peerId} label=${channel.label}`);
         resolve(channel);
       };
 
@@ -95,7 +119,8 @@ export class WebRTCService {
         const pcState = pc ? `pcState=${pc.connectionState}, iceState=${pc.iceConnectionState}, sigState=${pc.signalingState}` : 'no-pc';
         const chState = ch ? `chState=${ch.readyState}` : 'no-channel';
         const errorMsg = `DataChannel timeout (${timeoutMs / 1000}s) for peer ${peerId} [${pcState}, ${chState}]`;
-        console.error(`[WebRTC:${peerId}] ${errorMsg}`);
+        console.error(`[WEBRTC] Error: ${errorMsg}`);
+        this.setState(peerId, 'FAILED');
         reject(new Error(errorMsg));
       }, timeoutMs);
 
@@ -109,8 +134,9 @@ export class WebRTCService {
   public createPeerConnection(peerId: string, handlers: PeerConnectionHandlers): RTCPeerConnection {
     this.closePeerConnection(peerId);
     this.peerHandlers.set(peerId, handlers);
+    this.setState(peerId, 'CONNECTING');
 
-    console.log(`[WebRTC:${peerId}] Creating RTCPeerConnection...`);
+    console.log(`[WEBRTC] PEER_CONNECTION_CREATED peer=${peerId}`);
 
     const config: RTCConfiguration = {
       iceServers: this.iceServers,
@@ -122,23 +148,23 @@ export class WebRTCService {
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log(`[WebRTC:${peerId}] Generated local ICE candidate: ${event.candidate.candidate.substring(0, 40)}...`);
+        console.log(`[WEBRTC] ICE candidate generated for peer=${peerId}`);
         if (handlers.onIceCandidate) {
           handlers.onIceCandidate(peerId, event.candidate);
         }
       } else {
-        console.log(`[WebRTC:${peerId}] ICE candidate gathering complete`);
+        console.log(`[WEBRTC] ICE candidate gathering complete for peer=${peerId}`);
       }
     };
 
     pc.ondatachannel = (event) => {
       const channel = event.channel;
-      console.log(`[WebRTC:${peerId}] ondatachannel event received: label="${channel.label}" readyState="${channel.readyState}"`);
+      console.log(`[WEBRTC] DATA_CHANNEL_RECEIVED peer=${peerId} label=${channel.label} readyState=${channel.readyState}`);
       this.bindDataChannel(peerId, channel, handlers);
     };
 
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC:${peerId}] RTCPeerConnection state change: ${pc.connectionState}`);
+      console.log(`[WEBRTC] PeerConnection connectionstatechange peer=${peerId} state=${pc.connectionState}`);
       if (handlers.onConnectionStateChange) {
         handlers.onConnectionStateChange(peerId, pc.connectionState);
       }
@@ -146,15 +172,24 @@ export class WebRTCService {
         this.startStatsMonitoring(peerId, handlers.onStatsUpdate);
       } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         this.stopStatsMonitoring(peerId);
+        if (pc.connectionState === 'failed') {
+          this.setState(peerId, 'FAILED');
+        }
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log(`[WebRTC:${peerId}] ICE connection state change: ${pc.iceConnectionState}`);
+      console.log(`[WEBRTC] PeerConnection iceconnectionstatechange peer=${peerId} state=${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        console.log(`[WEBRTC] ICE_CONNECTED peer=${peerId}`);
+      } else if (pc.iceConnectionState === 'failed') {
+        console.error(`[WEBRTC] ICE connection failed for peer=${peerId}`);
+        this.setState(peerId, 'FAILED');
+      }
     };
 
     pc.onsignalingstatechange = () => {
-      console.log(`[WebRTC:${peerId}] Signaling state change: ${pc.signalingState}`);
+      console.log(`[WEBRTC] PeerConnection signalingstatechange peer=${peerId} state=${pc.signalingState}`);
     };
 
     return pc;
@@ -164,7 +199,7 @@ export class WebRTCService {
     const pc = this.peerConnections.get(peerId);
     if (!pc) throw new Error(`RTCPeerConnection not found for peer ${peerId}`);
 
-    console.log(`[WebRTC:${peerId}] Proactively creating RTCDataChannel with label="${label}"`);
+    console.log(`[WEBRTC] DATA_CHANNEL_CREATED peer=${peerId} label=${label}`);
 
     const channel = pc.createDataChannel(label, {
       ordered: true,
@@ -180,10 +215,9 @@ export class WebRTCService {
     channel.binaryType = 'arraybuffer';
     this.dataChannels.set(peerId, channel);
 
-    console.log(`[WebRTC:${peerId}] Binding DataChannel: label="${channel.label}" readyState="${channel.readyState}"`);
-
     const notifyReady = () => {
-      console.log(`[WebRTC:${peerId}] DataChannel onopen: channel is now OPEN and ready for transfer (label="${channel.label}")`);
+      this.setState(peerId, 'DATA_CHANNEL_OPEN');
+      console.log(`[WEBRTC] DATA_CHANNEL_OPEN peer=${peerId} label=${channel.label}`);
       const resolvers = this.channelReadyResolvers.get(peerId);
       if (resolvers && resolvers.length > 0) {
         this.channelReadyResolvers.delete(peerId);
@@ -200,11 +234,13 @@ export class WebRTCService {
     }
 
     channel.onclose = () => {
-      console.log(`[WebRTC:${peerId}] DataChannel onclose: channel closed`);
+      console.log(`[WEBRTC] DataChannel close peer=${peerId} label=${channel.label}`);
+      this.setState(peerId, 'CLOSED');
     };
 
     channel.onerror = (err) => {
-      console.error(`[WebRTC:${peerId}] DataChannel onerror:`, err);
+      console.error(`[WEBRTC] DataChannel error peer=${peerId} error:`, err);
+      this.setState(peerId, 'FAILED');
     };
 
     if (handlers?.onDataChannel) {
@@ -216,10 +252,9 @@ export class WebRTCService {
     const pc = this.peerConnections.get(peerId);
     if (!pc) throw new Error(`RTCPeerConnection not found for peer ${peerId}`);
 
-    console.log(`[WebRTC:${peerId}] Creating SDP offer...`);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    console.log(`[WebRTC:${peerId}] SDP offer created and set as local description`);
+    console.log(`[WEBRTC] OFFER_SENT peer=${peerId}`);
     return offer;
   }
 
@@ -227,11 +262,12 @@ export class WebRTCService {
     const pc = this.peerConnections.get(peerId);
     if (!pc) throw new Error(`RTCPeerConnection not found for peer ${peerId}`);
 
-    console.log(`[WebRTC:${peerId}] Handling incoming SDP offer...`);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    await this.flushEarlyIceCandidates(peerId, pc);
+
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    console.log(`[WebRTC:${peerId}] SDP answer created and set as local description`);
+    console.log(`[WEBRTC] ANSWER_SENT peer=${peerId}`);
     return answer;
   }
 
@@ -239,20 +275,43 @@ export class WebRTCService {
     const pc = this.peerConnections.get(peerId);
     if (!pc) throw new Error(`RTCPeerConnection not found for peer ${peerId}`);
 
-    console.log(`[WebRTC:${peerId}] Handling incoming SDP answer...`);
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    console.log(`[WebRTC:${peerId}] SDP answer set as remote description`);
+    console.log(`[WEBRTC] ANSWER_RECEIVED peer=${peerId}`);
+    await this.flushEarlyIceCandidates(peerId, pc);
   }
 
   public async addIceCandidate(peerId: string, candidate: RTCIceCandidateInit): Promise<void> {
     const pc = this.peerConnections.get(peerId);
-    if (!pc) return;
+
+    // If RemoteDescription has not been set yet, queue candidate to apply right after setRemoteDescription
+    if (!pc || !pc.remoteDescription) {
+      console.log(`[WEBRTC] Queueing early ICE candidate for peer=${peerId} (remoteDescription not set yet)`);
+      if (!this.earlyIceCandidates.has(peerId)) {
+        this.earlyIceCandidates.set(peerId, []);
+      }
+      this.earlyIceCandidates.get(peerId)!.push(candidate);
+      return;
+    }
 
     try {
-      console.log(`[WebRTC:${peerId}] Adding remote ICE candidate: ${candidate.candidate?.substring(0, 40)}...`);
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (err) {
-      console.warn(`[WebRTC:${peerId}] Error adding ICE candidate:`, err);
+      console.warn(`[WEBRTC] Error adding ICE candidate for peer=${peerId}:`, err);
+    }
+  }
+
+  private async flushEarlyIceCandidates(peerId: string, pc: RTCPeerConnection): Promise<void> {
+    const candidates = this.earlyIceCandidates.get(peerId);
+    if (candidates && candidates.length > 0) {
+      console.log(`[WEBRTC] Flushing ${candidates.length} queued ICE candidate(s) for peer=${peerId}`);
+      this.earlyIceCandidates.delete(peerId);
+      for (const cand of candidates) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (err) {
+          console.warn(`[WEBRTC] Error applying flushed ICE candidate for peer=${peerId}:`, err);
+        }
+      }
     }
   }
 
@@ -262,23 +321,25 @@ export class WebRTCService {
       return;
     }
 
-    console.log(`[WebRTC:${peerId}] Closing peer connection and cleanup...`);
+    console.log(`[WEBRTC] Closing peer connection for peer=${peerId}`);
     this.stopStatsMonitoring(peerId);
+    this.setState(peerId, 'CLOSED');
 
     const channel = this.dataChannels.get(peerId);
     if (channel) {
-      try { channel.close(); } catch (e) {}
+      try { channel.close(); } catch {}
       this.dataChannels.delete(peerId);
     }
 
     const pc = this.peerConnections.get(peerId);
     if (pc) {
-      try { pc.close(); } catch (e) {}
+      try { pc.close(); } catch {}
       this.peerConnections.delete(peerId);
     }
 
     this.peerHandlers.delete(peerId);
     this.channelReadyResolvers.delete(peerId);
+    this.earlyIceCandidates.delete(peerId);
   }
 
   private startStatsMonitoring(peerId: string, onStatsUpdate?: (peerId: string, stats: NetworkStats) => void): void {
@@ -373,7 +434,7 @@ export class WebRTCService {
           onStatsUpdate(peerId, stats);
         }
       } catch (err) {
-        console.warn(`[WebRTC:${peerId}] Error reading stats:`, err);
+        console.warn(`[WEBRTC] Error reading stats for peer=${peerId}:`, err);
       }
     }, 1000);
 

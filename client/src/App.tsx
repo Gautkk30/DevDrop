@@ -309,7 +309,22 @@ export function App() {
 
     const unsubTransferAccept = signalingClient.on('TRANSFER_ACCEPT', (msg) => {
       if (msg.payload?.transferId) {
+        console.log(`[TRANSFER] ACCEPT_RECEIVED peer=${msg.senderDeviceId} transferId=${msg.payload.transferId}`);
         startSendingTransfer(msg.payload.transferId);
+      }
+    });
+
+    const unsubTransferComplete = signalingClient.on('TRANSFER_COMPLETE', (msg) => {
+      if (msg.payload?.transferId) {
+        const transferId = msg.payload.transferId;
+        const t = activeTransfersMap.current.get(transferId);
+        if (t) {
+          t.status = 'completed';
+          t.verified = !!msg.payload.verified;
+          updateTransferState(t);
+          console.log(`[TRANSFER] COMPLETE peer=${msg.senderDeviceId} transferId=${transferId} (verified by receiver)`);
+          addToast('Transfer Verified', `Peer verified and saved ${t.metadata.fileName}`, 'success');
+        }
       }
     });
 
@@ -356,6 +371,7 @@ export function App() {
       unsubIce();
       unsubTransferOffer();
       unsubTransferAccept();
+      unsubTransferComplete();
       unsubTransferCancel();
       unsubRoomError();
       unsubExpired();
@@ -412,7 +428,14 @@ export function App() {
   const setupDataChannelHandlers = (peerId: string, channel: RTCDataChannel) => {
     channel.binaryType = 'arraybuffer';
     channel.onmessage = async (event) => {
-      if (typeof event.data !== 'string') {
+      if (typeof event.data === 'string') {
+        try {
+          const ctrl = JSON.parse(event.data);
+          if (ctrl.type === 'TRANSFER_START' && ctrl.metadata) {
+            console.log(`[TRANSFER] METADATA_RECEIVED peer=${peerId} transferId=${ctrl.metadata.transferId}`);
+          }
+        } catch {}
+      } else {
         const chunk = new Uint8Array(event.data as ArrayBuffer);
         handleIncomingBinaryChunk(peerId, chunk);
       }
@@ -430,6 +453,8 @@ export function App() {
     try {
       const rawArrayBuffer = (chunk.buffer as ArrayBuffer).slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
       const { chunkIndex, totalChunks, payload } = TransferEngine.unframeChunk(rawArrayBuffer);
+
+      console.log(`[TRANSFER] CHUNK_RECEIVED peer=${peerId} transferId=${targetTransfer.metadata.transferId} chunk=${chunkIndex + 1}/${totalChunks}`);
 
       if (!targetTransfer.receivedChunks) {
         targetTransfer.receivedChunks = new Array(totalChunks);
@@ -461,7 +486,7 @@ export function App() {
         updateTransferState(targetTransfer);
       }
     } catch (err: any) {
-      console.error('[App] Chunk framing error:', err);
+      console.error(`[TRANSFER] ERROR peer=${peerId} error:`, err);
     }
   };
 
@@ -477,7 +502,16 @@ export function App() {
         transfer.verified = true;
         transfer.status = 'completed';
         updateTransferState(transfer);
+        console.log(`[TRANSFER] COMPLETE peer=${transfer.metadata.senderDeviceId} transferId=${transfer.metadata.transferId}`);
         addToast('Transfer Complete', `Received ${transfer.metadata.fileName} (${TransferEngine.formatBytes(transfer.metadata.fileSize)})`, 'success');
+
+        // Notify sender of verified completion
+        signalingClient.send({
+          protocolVersion: 1,
+          type: 'TRANSFER_COMPLETE',
+          targetDeviceId: transfer.metadata.senderDeviceId,
+          payload: { transferId: transfer.metadata.transferId, verified: true },
+        });
 
         // Record in local history
         HistoryStorage.addEntry({
@@ -500,6 +534,7 @@ export function App() {
         transfer.status = 'failed';
         transfer.error = 'SHA-256 integrity verification failed: file corrupted during peer-to-peer transmission';
         updateTransferState(transfer);
+        console.error(`[TRANSFER] ERROR peer=${transfer.metadata.senderDeviceId} transferId=${transfer.metadata.transferId} checksum mismatch`);
         addToast('Verification Failed', 'SHA-256 checksum mismatch — file integrity failed', 'error');
 
         HistoryStorage.addEntry({
@@ -523,6 +558,7 @@ export function App() {
       transfer.status = 'failed';
       transfer.error = 'Failed to verify file integrity: ' + err.message;
       updateTransferState(transfer);
+      console.error(`[TRANSFER] ERROR peer=${transfer.metadata.senderDeviceId} transferId=${transfer.metadata.transferId} error:`, err);
       addToast('Integrity Error', err.message, 'error');
 
       HistoryStorage.addEntry({
@@ -626,7 +662,7 @@ export function App() {
     // Proactively initiate WebRTC connection if not already created
     targetDeviceIds.forEach((targetId) => {
       if (!webrtcService.getPeerConnection(targetId)) {
-        console.log(`[DIAGNOSTIC] handleSendFile: proactively initiating WebRTC connection to ${targetId}`);
+        console.log(`[WEBRTC] Proactively initiating connection to ${targetId}`);
         initiateWebRTCConnection(targetId);
       }
     });
@@ -667,6 +703,7 @@ export function App() {
     updateTransferState(newTransfer);
 
     targetDeviceIds.forEach((targetId) => {
+      console.log(`[TRANSFER] OFFER_SENT peer=${targetId} transferId=${transferId}`);
       signalingClient.send({
         protocolVersion: 1,
         type: 'TRANSFER_OFFER',
@@ -689,7 +726,7 @@ export function App() {
       const chState = webrtcService.getDataChannelState(targetId);
       const pcState = webrtcService.getPeerConnectionState(targetId);
       if (chState !== 'open' || pcState !== 'connected') {
-        console.log(`[DIAGNOSTIC] handleRetryTransfer: re-establishing WebRTC connection to ${targetId} (chState=${chState}, pcState=${pcState})`);
+        console.log(`[WEBRTC] handleRetryTransfer: re-establishing WebRTC connection to ${targetId} (chState=${chState}, pcState=${pcState})`);
         webrtcService.closePeerConnection(targetId);
         initiateWebRTCConnection(targetId);
       }
@@ -722,6 +759,8 @@ export function App() {
   };
 
   const autoAcceptTransferOffer = (metadata: TransferMetadata) => {
+    console.log(`[TRANSFER] OFFER_RECEIVED peer=${metadata.senderDeviceId} transferId=${metadata.transferId}`);
+
     const newTransfer: ActiveTransfer = {
       metadata,
       status: 'transferring',
@@ -737,6 +776,7 @@ export function App() {
 
     updateTransferState(newTransfer);
 
+    console.log(`[TRANSFER] ACCEPT_SENT peer=${metadata.senderDeviceId} transferId=${metadata.transferId}`);
     signalingClient.send({
       protocolVersion: 1,
       type: 'TRANSFER_ACCEPT',
@@ -754,20 +794,20 @@ export function App() {
     updateTransferState(transfer);
 
     const targetId = transfer.metadata.targetDeviceIds[0];
-    console.log(`[DIAGNOSTIC] startSendingTransfer: initiating for transferId=${transferId} targetId=${targetId}`);
+    console.log(`[TRANSFER] Initiating streaming for transferId=${transferId} targetId=${targetId}`);
 
     let dataChannel: RTCDataChannel;
     try {
       // Ensure peer connection is initiated if not already
       if (!webrtcService.getPeerConnection(targetId)) {
-        console.log(`[DIAGNOSTIC] startSendingTransfer: no PeerConnection found for ${targetId}, initiating now...`);
+        console.log(`[WEBRTC] Proactively creating PeerConnection for ${targetId}`);
         await initiateWebRTCConnection(targetId);
       }
 
       // Wait for DataChannel to be OPEN rather than immediately failing
       dataChannel = await webrtcService.waitForDataChannel(targetId, 15000);
     } catch (err: any) {
-      console.error(`[DIAGNOSTIC] startSendingTransfer: DataChannel not ready for ${targetId}:`, err);
+      console.error(`[TRANSFER] ERROR peer=${targetId} transferId=${transferId} error:`, err);
       transfer.status = 'failed';
       transfer.error = err.message || 'WebRTC DataChannel not available for peer';
       updateTransferState(transfer);
@@ -788,13 +828,22 @@ export function App() {
       return;
     }
 
-    console.log(`[DIAGNOSTIC] startSendingTransfer: DataChannel is OPEN for ${targetId}, starting chunk streaming`);
+    // Send metadata header over DataChannel
+    try {
+      if (dataChannel.readyState === 'open') {
+        dataChannel.send(JSON.stringify({ type: 'TRANSFER_START', metadata: transfer.metadata }));
+        console.log(`[TRANSFER] METADATA_SENT peer=${targetId} transferId=${transferId}`);
+      }
+    } catch (e) {
+      console.warn(`[TRANSFER] Warning sending metadata over DataChannel:`, e);
+    }
 
     TransferEngine.sendFileChunks(
       transfer.file,
       dataChannel,
       startChunkIndex,
       (bytesTransferred, chunkIndex) => {
+        console.log(`[TRANSFER] CHUNK_SENT peer=${targetId} transferId=${transferId} chunk=${chunkIndex}/${transfer.metadata.totalChunks}`);
         transfer.bytesTransferred = bytesTransferred;
         transfer.currentChunkIndex = chunkIndex;
         transfer.progressPercent = Math.min(100, Math.round((bytesTransferred / transfer.metadata.fileSize) * 100));
@@ -824,10 +873,8 @@ export function App() {
         updateTransferState(transfer);
       },
       () => {
-        transfer.status = 'completed';
-        transfer.verified = true;
-        updateTransferState(transfer);
-        addToast('Transfer Sent', `Finished sending ${transfer.metadata.fileName}`, 'success');
+        console.log(`[TRANSFER] Finished sending chunks for transferId=${transferId}, awaiting receiver verification`);
+        addToast('Transfer Sent', `Finished sending ${transfer.metadata.fileName}`, 'info');
 
         // Record history
         HistoryStorage.addEntry({
@@ -858,6 +905,7 @@ export function App() {
         setTimeout(() => processNextInQueue(), 200);
       },
       (err) => {
+        console.error(`[TRANSFER] ERROR peer=${targetId} transferId=${transferId} error:`, err);
         transfer.status = 'failed';
         transfer.error = err.message;
         updateTransferState(transfer);
