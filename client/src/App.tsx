@@ -217,7 +217,8 @@ export function App() {
       if (msg.payload) {
         setRoom(msg.payload.room);
         setCurrentDevice(msg.payload.device);
-        setPeers(msg.payload.peers || []);
+        const peerList: DeviceInfo[] = msg.payload.peers || [];
+        setPeers(peerList);
         setIsJoinOpen(false);
         addToast('Joined Room', `Connected to room ${msg.payload.room.code}`, 'success');
 
@@ -229,6 +230,17 @@ export function App() {
             device: msg.payload.device,
           },
         });
+
+        // Symmetrical initiation: initiate to any existing peer if our ID is lexicographically smaller
+        const myDeviceId = msg.payload.device?.id;
+        if (myDeviceId) {
+          peerList.forEach((existingPeer) => {
+            if (existingPeer.id !== myDeviceId && myDeviceId < existingPeer.id) {
+              console.log(`[DIAGNOSTIC] ROOM_JOINED: initiating WebRTC connection to existing peer ${existingPeer.id} (${existingPeer.name})`);
+              initiateWebRTCConnection(existingPeer.id);
+            }
+          });
+        }
       }
     });
 
@@ -238,7 +250,9 @@ export function App() {
         setPeers((prev) => [...prev.filter((p) => p.id !== newDevice.id), newDevice]);
         addToast('Device Connected', `${newDevice.name} joined the room`, 'info');
 
+        // Symmetrical initiation: initiate to new peer if our ID is lexicographically smaller
         if (currentDevice && currentDevice.id < newDevice.id) {
+          console.log(`[DIAGNOSTIC] PEER_JOINED: initiating WebRTC connection to new peer ${newDevice.id} (${newDevice.name})`);
           initiateWebRTCConnection(newDevice.id);
         }
       }
@@ -609,6 +623,14 @@ export function App() {
   const handleSendFile = async (file: File, targetDeviceIds: string[]) => {
     if (!currentDevice) return;
 
+    // Proactively initiate WebRTC connection if not already created
+    targetDeviceIds.forEach((targetId) => {
+      if (!webrtcService.getPeerConnection(targetId)) {
+        console.log(`[DIAGNOSTIC] handleSendFile: proactively initiating WebRTC connection to ${targetId}`);
+        initiateWebRTCConnection(targetId);
+      }
+    });
+
     const transferId = 'tr_' + Math.random().toString(36).substring(2, 9);
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const isRisky = TransferEngine.isExecutableRisk(file.name);
@@ -661,6 +683,18 @@ export function App() {
       return;
     }
 
+    const targetIds = failedTransfer.metadata.targetDeviceIds;
+    // If peer connection or data channel is dead/closed, reset and re-establish
+    targetIds.forEach((targetId) => {
+      const chState = webrtcService.getDataChannelState(targetId);
+      const pcState = webrtcService.getPeerConnectionState(targetId);
+      if (chState !== 'open' || pcState !== 'connected') {
+        console.log(`[DIAGNOSTIC] handleRetryTransfer: re-establishing WebRTC connection to ${targetId} (chState=${chState}, pcState=${pcState})`);
+        webrtcService.closePeerConnection(targetId);
+        initiateWebRTCConnection(targetId);
+      }
+    });
+
     activeTransfersMap.current.delete(failedTransferId);
     setTransfers(Array.from(activeTransfersMap.current.values()));
 
@@ -711,7 +745,7 @@ export function App() {
     });
   };
 
-  const startSendingTransfer = (transferId: string, startChunkIndex: number = 0) => {
+  const startSendingTransfer = async (transferId: string, startChunkIndex: number = 0) => {
     const transfer = activeTransfersMap.current.get(transferId);
     if (!transfer || !transfer.file) return;
 
@@ -720,11 +754,22 @@ export function App() {
     updateTransferState(transfer);
 
     const targetId = transfer.metadata.targetDeviceIds[0];
-    const dataChannel = webrtcService.getDataChannel(targetId);
+    console.log(`[DIAGNOSTIC] startSendingTransfer: initiating for transferId=${transferId} targetId=${targetId}`);
 
-    if (!dataChannel) {
+    let dataChannel: RTCDataChannel;
+    try {
+      // Ensure peer connection is initiated if not already
+      if (!webrtcService.getPeerConnection(targetId)) {
+        console.log(`[DIAGNOSTIC] startSendingTransfer: no PeerConnection found for ${targetId}, initiating now...`);
+        await initiateWebRTCConnection(targetId);
+      }
+
+      // Wait for DataChannel to be OPEN rather than immediately failing
+      dataChannel = await webrtcService.waitForDataChannel(targetId, 15000);
+    } catch (err: any) {
+      console.error(`[DIAGNOSTIC] startSendingTransfer: DataChannel not ready for ${targetId}:`, err);
       transfer.status = 'failed';
-      transfer.error = 'WebRTC DataChannel not available for peer';
+      transfer.error = err.message || 'WebRTC DataChannel not available for peer';
       updateTransferState(transfer);
 
       HistoryStorage.addEntry({
@@ -739,8 +784,11 @@ export function App() {
         status: 'failed',
       });
       setHistory(HistoryStorage.getHistory());
+      addToast('Transfer Failed', transfer.error, 'error');
       return;
     }
+
+    console.log(`[DIAGNOSTIC] startSendingTransfer: DataChannel is OPEN for ${targetId}, starting chunk streaming`);
 
     TransferEngine.sendFileChunks(
       transfer.file,

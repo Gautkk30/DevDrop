@@ -11,10 +11,13 @@ export class WebRTCService {
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private dataChannels: Map<string, RTCDataChannel> = new Map();
   private statsTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
+  private channelReadyResolvers: Map<string, Array<(channel: RTCDataChannel) => void>> = new Map();
+  private peerHandlers: Map<string, PeerConnectionHandlers> = new Map();
   private iceServers: RTCIceServer[];
 
   constructor() {
     this.iceServers = this.parseIceServers();
+    console.log('[WebRTCService] Initialized with ICE servers:', this.iceServers.map((s) => s.urls));
   }
 
   private parseIceServers(): RTCIceServer[] {
@@ -37,8 +40,77 @@ export class WebRTCService {
     return servers;
   }
 
+  public getPeerConnection(peerId: string): RTCPeerConnection | undefined {
+    return this.peerConnections.get(peerId);
+  }
+
+  public getPeerConnectionState(peerId: string): RTCPeerConnectionState | 'none' {
+    const pc = this.peerConnections.get(peerId);
+    return pc ? pc.connectionState : 'none';
+  }
+
+  public getDataChannel(peerId: string): RTCDataChannel | undefined {
+    return this.dataChannels.get(peerId);
+  }
+
+  public getDataChannelState(peerId: string): RTCDataChannelState | 'none' {
+    const ch = this.dataChannels.get(peerId);
+    return ch ? ch.readyState : 'none';
+  }
+
+  public isDataChannelOpen(peerId: string): boolean {
+    const ch = this.dataChannels.get(peerId);
+    return !!ch && ch.readyState === 'open';
+  }
+
+  public async waitForDataChannel(peerId: string, timeoutMs = 15000): Promise<RTCDataChannel> {
+    const existing = this.dataChannels.get(peerId);
+    if (existing && existing.readyState === 'open') {
+      console.log(`[WebRTC:${peerId}] waitForDataChannel: DataChannel is already OPEN`);
+      return existing;
+    }
+
+    console.log(
+      `[WebRTC:${peerId}] waitForDataChannel: waiting up to ${timeoutMs}ms for DataChannel to reach OPEN state (current state: ${existing ? existing.readyState : 'NONE'})`
+    );
+
+    return new Promise((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const onOpenHandler = (channel: RTCDataChannel) => {
+        if (timer) clearTimeout(timer);
+        console.log(`[WebRTC:${peerId}] waitForDataChannel: successfully reached OPEN state (label="${channel.label}")`);
+        resolve(channel);
+      };
+
+      timer = setTimeout(() => {
+        // Clean up resolver
+        const list = this.channelReadyResolvers.get(peerId);
+        if (list) {
+          this.channelReadyResolvers.set(peerId, list.filter((cb) => cb !== onOpenHandler));
+        }
+
+        const pc = this.peerConnections.get(peerId);
+        const ch = this.dataChannels.get(peerId);
+        const pcState = pc ? `pcState=${pc.connectionState}, iceState=${pc.iceConnectionState}, sigState=${pc.signalingState}` : 'no-pc';
+        const chState = ch ? `chState=${ch.readyState}` : 'no-channel';
+        const errorMsg = `DataChannel timeout (${timeoutMs / 1000}s) for peer ${peerId} [${pcState}, ${chState}]`;
+        console.error(`[WebRTC:${peerId}] ${errorMsg}`);
+        reject(new Error(errorMsg));
+      }, timeoutMs);
+
+      if (!this.channelReadyResolvers.has(peerId)) {
+        this.channelReadyResolvers.set(peerId, []);
+      }
+      this.channelReadyResolvers.get(peerId)!.push(onOpenHandler);
+    });
+  }
+
   public createPeerConnection(peerId: string, handlers: PeerConnectionHandlers): RTCPeerConnection {
     this.closePeerConnection(peerId);
+    this.peerHandlers.set(peerId, handlers);
+
+    console.log(`[WebRTC:${peerId}] Creating RTCPeerConnection...`);
 
     const config: RTCConfiguration = {
       iceServers: this.iceServers,
@@ -49,20 +121,24 @@ export class WebRTCService {
     this.peerConnections.set(peerId, pc);
 
     pc.onicecandidate = (event) => {
-      if (event.candidate && handlers.onIceCandidate) {
-        handlers.onIceCandidate(peerId, event.candidate);
+      if (event.candidate) {
+        console.log(`[WebRTC:${peerId}] Generated local ICE candidate: ${event.candidate.candidate.substring(0, 40)}...`);
+        if (handlers.onIceCandidate) {
+          handlers.onIceCandidate(peerId, event.candidate);
+        }
+      } else {
+        console.log(`[WebRTC:${peerId}] ICE candidate gathering complete`);
       }
     };
 
     pc.ondatachannel = (event) => {
       const channel = event.channel;
-      this.dataChannels.set(peerId, channel);
-      if (handlers.onDataChannel) {
-        handlers.onDataChannel(peerId, channel);
-      }
+      console.log(`[WebRTC:${peerId}] ondatachannel event received: label="${channel.label}" readyState="${channel.readyState}"`);
+      this.bindDataChannel(peerId, channel, handlers);
     };
 
     pc.onconnectionstatechange = () => {
+      console.log(`[WebRTC:${peerId}] RTCPeerConnection state change: ${pc.connectionState}`);
       if (handlers.onConnectionStateChange) {
         handlers.onConnectionStateChange(peerId, pc.connectionState);
       }
@@ -73,6 +149,14 @@ export class WebRTCService {
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[WebRTC:${peerId}] ICE connection state change: ${pc.iceConnectionState}`);
+    };
+
+    pc.onsignalingstatechange = () => {
+      console.log(`[WebRTC:${peerId}] Signaling state change: ${pc.signalingState}`);
+    };
+
     return pc;
   }
 
@@ -80,21 +164,62 @@ export class WebRTCService {
     const pc = this.peerConnections.get(peerId);
     if (!pc) throw new Error(`RTCPeerConnection not found for peer ${peerId}`);
 
+    console.log(`[WebRTC:${peerId}] Proactively creating RTCDataChannel with label="${label}"`);
+
     const channel = pc.createDataChannel(label, {
       ordered: true,
     });
+
+    const handlers = this.peerHandlers.get(peerId);
+    this.bindDataChannel(peerId, channel, handlers);
+
+    return channel;
+  }
+
+  public bindDataChannel(peerId: string, channel: RTCDataChannel, handlers?: PeerConnectionHandlers): void {
     channel.binaryType = 'arraybuffer';
     this.dataChannels.set(peerId, channel);
 
-    return channel;
+    console.log(`[WebRTC:${peerId}] Binding DataChannel: label="${channel.label}" readyState="${channel.readyState}"`);
+
+    const notifyReady = () => {
+      console.log(`[WebRTC:${peerId}] DataChannel onopen: channel is now OPEN and ready for transfer (label="${channel.label}")`);
+      const resolvers = this.channelReadyResolvers.get(peerId);
+      if (resolvers && resolvers.length > 0) {
+        this.channelReadyResolvers.delete(peerId);
+        resolvers.forEach((cb) => cb(channel));
+      }
+    };
+
+    if (channel.readyState === 'open') {
+      setTimeout(notifyReady, 0);
+    } else {
+      channel.onopen = () => {
+        notifyReady();
+      };
+    }
+
+    channel.onclose = () => {
+      console.log(`[WebRTC:${peerId}] DataChannel onclose: channel closed`);
+    };
+
+    channel.onerror = (err) => {
+      console.error(`[WebRTC:${peerId}] DataChannel onerror:`, err);
+    };
+
+    if (handlers?.onDataChannel) {
+      handlers.onDataChannel(peerId, channel);
+    }
   }
 
   public async createOffer(peerId: string): Promise<RTCSessionDescriptionInit> {
     const pc = this.peerConnections.get(peerId);
     if (!pc) throw new Error(`RTCPeerConnection not found for peer ${peerId}`);
 
+    console.log(`[WebRTC:${peerId}] Creating SDP offer...`);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    console.log(`[WebRTC:${peerId}] SDP offer created and set as local description`);
     return offer;
   }
 
@@ -102,9 +227,11 @@ export class WebRTCService {
     const pc = this.peerConnections.get(peerId);
     if (!pc) throw new Error(`RTCPeerConnection not found for peer ${peerId}`);
 
+    console.log(`[WebRTC:${peerId}] Handling incoming SDP offer...`);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    console.log(`[WebRTC:${peerId}] SDP answer created and set as local description`);
     return answer;
   }
 
@@ -112,7 +239,9 @@ export class WebRTCService {
     const pc = this.peerConnections.get(peerId);
     if (!pc) throw new Error(`RTCPeerConnection not found for peer ${peerId}`);
 
+    console.log(`[WebRTC:${peerId}] Handling incoming SDP answer...`);
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    console.log(`[WebRTC:${peerId}] SDP answer set as remote description`);
   }
 
   public async addIceCandidate(peerId: string, candidate: RTCIceCandidateInit): Promise<void> {
@@ -120,17 +249,20 @@ export class WebRTCService {
     if (!pc) return;
 
     try {
+      console.log(`[WebRTC:${peerId}] Adding remote ICE candidate: ${candidate.candidate?.substring(0, 40)}...`);
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (err) {
-      console.warn(`[WebRTCService] Error adding ICE candidate for ${peerId}:`, err);
+      console.warn(`[WebRTC:${peerId}] Error adding ICE candidate:`, err);
     }
   }
 
-  public getDataChannel(peerId: string): RTCDataChannel | undefined {
-    return this.dataChannels.get(peerId);
-  }
-
   public closePeerConnection(peerId: string): void {
+    if (peerId === '*') {
+      Array.from(this.peerConnections.keys()).forEach((pId) => this.closePeerConnection(pId));
+      return;
+    }
+
+    console.log(`[WebRTC:${peerId}] Closing peer connection and cleanup...`);
     this.stopStatsMonitoring(peerId);
 
     const channel = this.dataChannels.get(peerId);
@@ -144,6 +276,9 @@ export class WebRTCService {
       try { pc.close(); } catch (e) {}
       this.peerConnections.delete(peerId);
     }
+
+    this.peerHandlers.delete(peerId);
+    this.channelReadyResolvers.delete(peerId);
   }
 
   private startStatsMonitoring(peerId: string, onStatsUpdate?: (peerId: string, stats: NetworkStats) => void): void {
@@ -238,7 +373,7 @@ export class WebRTCService {
           onStatsUpdate(peerId, stats);
         }
       } catch (err) {
-        console.warn(`[WebRTCService] Error reading stats for ${peerId}:`, err);
+        console.warn(`[WebRTC:${peerId}] Error reading stats:`, err);
       }
     }, 1000);
 
@@ -281,4 +416,3 @@ export class WebRTCService {
 }
 
 export const webrtcService = new WebRTCService();
-
