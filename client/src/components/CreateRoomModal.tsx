@@ -24,6 +24,13 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({ isOpen, onClos
     e.preventDefault();
     if (!deviceName.trim()) return;
 
+    console.log('[DIAGNOSTIC] 1. Create Room form submitted:', {
+      deviceName: deviceName.trim(),
+      deviceType,
+      isOneTime,
+      enablePassword,
+    });
+
     onCreate({
       deviceName: deviceName.trim(),
       deviceType,

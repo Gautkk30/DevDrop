@@ -194,6 +194,7 @@ export function App() {
     });
 
     const unsubCreated = signalingClient.on('ROOM_CREATED', (msg) => {
+      console.log('[DIAGNOSTIC] 8. Client received ROOM_CREATED response:', msg);
       if (msg.payload) {
         setRoom(msg.payload.room);
         setCurrentDevice(msg.payload.device);
@@ -530,13 +531,20 @@ export function App() {
   };
 
   const handleCreateRoom = async (options: { deviceName: string; deviceType: any; platformDescription?: string; password?: string; isOneTime: boolean }) => {
+    console.log('[DIAGNOSTIC] 1. handleCreateRoom triggered with options:', options);
     signalingClient.setAutoRejoin(null);
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
+    console.log('[DIAGNOSTIC] 2. Constructing ROOM_CREATE payload, deviceId:', deviceId);
+    console.log('[DIAGNOSTIC] 3. Message type: ROOM_CREATE');
+
     try {
       if (!signalingClient.isConnected()) {
+        console.log('[DIAGNOSTIC] Signaling socket not connected yet, connecting...');
         addToast('Connecting', 'Connecting to signaling server...', 'info');
       }
       await signalingClient.ensureConnected();
+      console.log('[DIAGNOSTIC] 4. Calling signalingClient.send() for ROOM_CREATE');
+
       signalingClient.send({
         protocolVersion: 1,
         type: 'ROOM_CREATE',

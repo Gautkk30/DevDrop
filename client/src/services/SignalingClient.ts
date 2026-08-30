@@ -24,6 +24,7 @@ export class SignalingClient {
     } else {
       this.signalingUrl = 'ws://localhost:3001/ws';
     }
+    console.log('[DIAGNOSTIC] 6. SignalingClient initialized with target URL:', this.signalingUrl, '(import.meta.env.PROD:', import.meta.env.PROD, ')');
   }
 
   public getUrl(): string {
@@ -202,11 +203,15 @@ export class SignalingClient {
   }
 
   public send(message: SignalingMessage): void {
+    console.log('[DIAGNOSTIC] 4. SignalingClient.send() called for type:', message.type);
+    console.log('[DIAGNOSTIC] 5. WebSocket readyState:', this.ws ? this.ws.readyState : 'NULL', '(1=OPEN, 0=CONNECTING, 2=CLOSING, 3=CLOSED)');
+    console.log('[DIAGNOSTIC] 6. Target signaling URL:', this.signalingUrl);
     this.logOutgoingDiagnostic(message);
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
         this.ws.send(JSON.stringify(message));
+        console.log('[DIAGNOSTIC] 7. ws.send() successfully executed on open socket for type:', message.type);
       } catch (err) {
         console.error('[SignalingClient] Send failed, queuing message:', message.type, err);
         this.enqueueMessage(message);
@@ -245,6 +250,7 @@ export class SignalingClient {
         try {
           this.logOutgoingDiagnostic(msg);
           this.ws.send(JSON.stringify(msg));
+          console.log('[DIAGNOSTIC] 7. ws.send() successfully executed from flushed queue for type:', msg.type);
         } catch (err) {
           console.error('[SignalingClient] Error flushing queued message:', msg.type, err);
           this.enqueueMessage(msg);
