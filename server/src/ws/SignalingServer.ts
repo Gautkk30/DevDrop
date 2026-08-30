@@ -82,7 +82,7 @@ export class SignalingServer {
         }
 
         try {
-          const { room, hostDevice } = this.roomManager.createRoom({
+          const { room, hostDevice } = await this.roomManager.createRoom({
             password,
             isOneTime,
             hostDevice: device,

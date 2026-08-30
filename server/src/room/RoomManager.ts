@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { DeviceInfo, RoomMetadata } from '../shared/types.js';
 import { WebSocket } from 'ws';
-import { IRoomPersistenceStore, RedisRoomStore } from './RedisRoomStore.js';
+import { IRoomPersistenceStore, SerializedRoom } from './RedisRoomStore.js';
 
 export interface RoomPeer {
   device: DeviceInfo;
@@ -50,13 +50,13 @@ export class RoomManager {
     return code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
   }
 
-  public createRoom(options: {
+  public async createRoom(options: {
     password?: string;
     isOneTime?: boolean;
     ttlMs?: number;
     hostDevice: DeviceInfo;
     ws: WebSocket;
-  }): { room: RoomMetadata; hostDevice: DeviceInfo } {
+  }): Promise<{ room: RoomMetadata; hostDevice: DeviceInfo }> {
     const roomId = this.generateRoomId();
     const code = this.generateRoomCode();
     const now = Date.now();
@@ -89,25 +89,31 @@ export class RoomManager {
     this.rooms.set(roomId, room);
     this.codeToRoomId.set(rawCodeUpper, roomId);
     this.codeToRoomId.set(normalizedCode, roomId);
+    this.codeToRoomId.set(roomId, roomId);
     this.deviceToRoomId.set(options.hostDevice.id, roomId);
 
     console.log(`[ROOM DEBUG] CREATE requested instance=${this.instanceId} device=${options.hostDevice.id}`);
     console.log(`[ROOM DEBUG] CREATED instance=${this.instanceId} room=${roomId} code=${code}`);
     console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
 
-    // Persist to Redis (fire-and-forget) so room survives process restart
+    // Await Redis persistence so room is guaranteed stored BEFORE ROOM_CREATED is sent to client
     if (this.redisStore) {
-      this.redisStore.saveRoom({
-        id: roomId,
-        code,
-        createdAt: now,
-        expiresAt,
-        passwordHash: passwordHash || '',
-        isOneTime: !!options.isOneTime,
-        hostDeviceId: options.hostDevice.id,
-      }).catch((err: Error) => {
-        console.error(`[ROOM DEBUG] Redis persist failed for room=${roomId}:`, err.message);
-      });
+      try {
+        await this.redisStore.saveRoom({
+          id: roomId,
+          code,
+          createdAt: now,
+          expiresAt,
+          passwordHash: passwordHash || '',
+          isOneTime: !!options.isOneTime,
+          hostDeviceId: options.hostDevice.id,
+        });
+        console.log(`[ROOM DEBUG] Room ${roomId} (code: ${code}) persisted to Redis successfully`);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[ROOM ERROR] [${this.instanceId}] Redis persistence failed for room ${roomId} (code: ${code}):`, errMsg);
+        // Do not fail local creation if Redis is unreachable, but log prominently
+      }
     }
 
     return {
@@ -119,7 +125,7 @@ export class RoomManager {
   public getRoomByCode(code: string): InternalRoom | undefined {
     const rawUpper = code.trim().toUpperCase();
     const normalized = RoomManager.normalizeCode(code);
-    const roomId = this.codeToRoomId.get(rawUpper) || this.codeToRoomId.get(normalized);
+    const roomId = this.codeToRoomId.get(rawUpper) || this.codeToRoomId.get(normalized) || this.codeToRoomId.get(code.trim());
     if (!roomId) return undefined;
     return this.getRoomById(roomId);
   }
@@ -129,22 +135,61 @@ export class RoomManager {
    * attempt to rehydrate from Redis. Call this before joinRoom() in the
    * SignalingServer so the synchronous joinRoom() finds the room in-memory.
    */
-  public async findOrRehydrateRoom(code: string): Promise<InternalRoom | undefined> {
-    const inMemory = this.getRoomByCode(code);
-    if (inMemory) return inMemory;
+  public async findOrRehydrateRoom(codeOrId: string): Promise<InternalRoom | undefined> {
+    const rawInput = codeOrId.trim();
+    const normalizedInput = RoomManager.normalizeCode(rawInput);
 
-    if (!this.redisStore) return undefined;
+    console.log(`[ROOM DEBUG] findOrRehydrateRoom: searching for "${rawInput}" (normalized: "${normalizedInput}")`);
+
+    // 1. Check in-memory first
+    const inMemory = this.getRoomByCode(rawInput) || this.getRoomById(rawInput) || this.getRoomByCode(normalizedInput);
+    if (inMemory) {
+      console.log(`[ROOM DEBUG] findOrRehydrateRoom: found in memory id="${inMemory.id}" code="${inMemory.code}"`);
+      return inMemory;
+    }
+    console.log(`[ROOM DEBUG] findOrRehydrateRoom: not in memory (active rooms: ${this.rooms.size})`);
+
+    if (!this.redisStore) {
+      console.log(`[ROOM DEBUG] findOrRehydrateRoom: Redis store not configured, lookup failed`);
+      return undefined;
+    }
 
     try {
-      const serialized = await this.redisStore.getRoomByCode(code);
-      if (!serialized) return undefined;
+      console.log(`[ROOM DEBUG] findOrRehydrateRoom: querying Redis for key "code:${normalizedInput}" or "room:${rawInput}"`);
+      let serialized: SerializedRoom | null = null;
 
-      // Check if another concurrent request already rehydrated it
-      if (this.rooms.has(serialized.id)) {
-        return this.rooms.get(serialized.id);
+      if (rawInput.startsWith('rm_')) {
+        serialized = await this.redisStore.getRoomById(rawInput);
+      }
+      if (!serialized) {
+        serialized = await this.redisStore.getRoomByCode(normalizedInput);
+      }
+      if (!serialized && rawInput !== normalizedInput) {
+        serialized = await this.redisStore.getRoomByCode(rawInput);
       }
 
-      // Rehydrate into in-memory store (peers start empty — they must reconnect)
+      if (!serialized) {
+        console.log(`[ROOM DEBUG] findOrRehydrateRoom: room "${rawInput}" NOT FOUND in Redis`);
+        return undefined;
+      }
+
+      console.log(`[ROOM DEBUG] findOrRehydrateRoom: FOUND in Redis id="${serialized.id}" code="${serialized.code}" expiresAt=${serialized.expiresAt}`);
+
+      // Check expiration
+      if (isNaN(serialized.expiresAt) || Date.now() > serialized.expiresAt) {
+        console.log(`[ROOM DEBUG] findOrRehydrateRoom: room "${serialized.id}" is EXPIRED in Redis (expiresAt=${serialized.expiresAt}, now=${Date.now()})`);
+        await this.redisStore.deleteRoom(serialized.id, serialized.code);
+        return undefined;
+      }
+
+      // Check if another concurrent request already rehydrated it
+      const existing = this.rooms.get(serialized.id);
+      if (existing) {
+        console.log(`[ROOM DEBUG] findOrRehydrateRoom: room "${serialized.id}" already rehydrated in memory`);
+        return existing;
+      }
+
+      // Rehydrate into in-memory structures (peers start empty — connecting devices register normally)
       const room: InternalRoom = {
         id: serialized.id,
         code: serialized.code,
@@ -156,18 +201,20 @@ export class RoomManager {
         hostDeviceId: serialized.hostDeviceId,
       };
 
+      const rawCodeUpper = room.code.toUpperCase();
       const normalizedCode = RoomManager.normalizeCode(room.code);
-      this.rooms.set(room.id, room);
-      this.codeToRoomId.set(room.code.toUpperCase(), room.id);
-      this.codeToRoomId.set(normalizedCode, room.id);
 
-      console.log(`[ROOM DEBUG] REHYDRATED from Redis instance=${this.instanceId} room=${room.id} code=${room.code}`);
-      console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
+      this.rooms.set(room.id, room);
+      this.codeToRoomId.set(rawCodeUpper, room.id);
+      this.codeToRoomId.set(normalizedCode, room.id);
+      this.codeToRoomId.set(room.id, room.id);
+
+      console.log(`[ROOM DEBUG] REHYDRATED from Redis instance=${this.instanceId} room=${room.id} code=${room.code} activeRooms=${this.rooms.size}`);
 
       return room;
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[ROOM DEBUG] Redis rehydrate failed for code=${code}:`, errMsg);
+      console.error(`[ROOM DEBUG] Redis rehydrate failed for "${rawInput}":`, errMsg);
       return undefined;
     }
   }
@@ -199,18 +246,18 @@ export class RoomManager {
     const rawInput = roomIdOrCode.trim();
     const normalizedInput = RoomManager.normalizeCode(rawInput);
 
-    console.log(`[ROOM DEBUG] JOIN requested instance=${this.instanceId} room=${rawInput} device=${device.id}`);
-    console.log(`[ROOM DEBUG] JOIN lookup instance=${this.instanceId} normalized=${normalizedInput}`);
+    console.log(`[ROOM DEBUG] JOIN requested instance=${this.instanceId} room="${rawInput}" (normalized: "${normalizedInput}") device=${device.id}`);
 
     let room = this.getRoomByCode(rawInput) || this.getRoomById(rawInput) || this.getRoomByCode(normalizedInput);
 
     if (!room) {
       console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
-      console.warn(`[ROOM DEBUG] [${this.instanceId}] JOIN_FAILED: Room "${rawInput}" not found among ${this.rooms.size} active rooms.`);
+      console.warn(`[ROOM DEBUG] [${this.instanceId}] JOIN_FAILED: Room "${rawInput}" (normalized: "${normalizedInput}") not found among ${this.rooms.size} active rooms.`);
       throw new Error('Room not found or expired');
     }
 
     if (room.passwordHash && !this.validatePassword(room, password)) {
+      console.warn(`[ROOM DEBUG] [${this.instanceId}] JOIN_FAILED: Invalid password for room "${room.code}"`);
       throw new Error('Invalid room password');
     }
 
@@ -223,7 +270,7 @@ export class RoomManager {
     room.peers.set(device.id, peer);
     this.deviceToRoomId.set(device.id, room.id);
 
-    console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
+    console.log(`[ROOM DEBUG] JOIN SUCCESS instance=${this.instanceId} room="${room.id}" code="${room.code}" device="${device.id}" totalPeers=${room.peers.size}`);
 
     const publicPeers = Array.from(room.peers.values()).map((p) => p.device);
 
@@ -269,7 +316,7 @@ export class RoomManager {
     };
   }
 
-  public closeRoom(roomId: string, reason: string): void {
+  public async closeRoom(roomId: string, reason: string): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) return;
 
@@ -293,14 +340,18 @@ export class RoomManager {
 
     this.codeToRoomId.delete(room.code.toUpperCase());
     this.codeToRoomId.delete(RoomManager.normalizeCode(room.code));
+    this.codeToRoomId.delete(roomId);
     this.rooms.delete(roomId);
     console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
 
     // Also remove from Redis
     if (this.redisStore) {
-      this.redisStore.deleteRoom(roomId, room.code).catch((err: Error) => {
-        console.error(`[ROOM DEBUG] Redis delete failed for room=${roomId}:`, err.message);
-      });
+      try {
+        await this.redisStore.deleteRoom(roomId, room.code);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[ROOM DEBUG] Redis delete failed for room=${roomId}:`, errMsg);
+      }
     }
   }
 
@@ -326,7 +377,9 @@ export class RoomManager {
     const now = Date.now();
     for (const [roomId, room] of this.rooms.entries()) {
       if (now > room.expiresAt) {
-        this.closeRoom(roomId, 'Expired by system sweep');
+        this.closeRoom(roomId, 'Expired by system sweep').catch((err) => {
+          console.error('[ROOM DEBUG] Sweep error closing room:', err);
+        });
       }
     }
   }

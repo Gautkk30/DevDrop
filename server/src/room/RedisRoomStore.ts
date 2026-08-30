@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import { RoomManager } from './RoomManager.js';
 
 export interface SerializedRoom {
   id: string;
@@ -24,6 +25,14 @@ export class RedisRoomStore implements IRoomPersistenceStore {
   private connected = false;
 
   constructor(redisUrl: string) {
+    // Log safe connection target without exposing credentials
+    try {
+      const parsed = new URL(redisUrl);
+      console.log(`[RedisRoomStore] Initializing connection to ${parsed.protocol}//${parsed.hostname}:${parsed.port || '6379'}`);
+    } catch {
+      console.log('[RedisRoomStore] Initializing connection to configured Redis URL');
+    }
+
     this.redis = new Redis(redisUrl, {
       maxRetriesPerRequest: 3,
       lazyConnect: false,
@@ -64,43 +73,59 @@ export class RedisRoomStore implements IRoomPersistenceStore {
   }
 
   async saveRoom(room: SerializedRoom): Promise<void> {
-    try {
-      const key = `room:${room.id}`;
-      const ttlSeconds = Math.max(1, Math.ceil((room.expiresAt - Date.now()) / 1000));
-      const normalizedCode = room.code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-      const rawCodeUpper = room.code.toUpperCase();
+    const key = `room:${room.id}`;
+    const now = Date.now();
+    const ttlSeconds = Math.max(1, Math.ceil((room.expiresAt - now) / 1000));
+    const normalizedCode = RoomManager.normalizeCode(room.code);
 
-      await this.redis.pipeline()
-        .hset(key, {
-          id: room.id,
-          code: room.code,
-          createdAt: String(room.createdAt),
-          expiresAt: String(room.expiresAt),
-          passwordHash: room.passwordHash || '',
-          isOneTime: room.isOneTime ? '1' : '0',
-          hostDeviceId: room.hostDeviceId,
-        })
-        .expire(key, ttlSeconds)
-        .set(`code:${normalizedCode}`, room.id, 'EX', ttlSeconds)
-        .set(`code:${rawCodeUpper}`, room.id, 'EX', ttlSeconds)
-        .exec();
+    console.log(`[RedisRoomStore] saveRoom START: id="${room.id}" code="${room.code}" normalized="${normalizedCode}" expiresAt=${room.expiresAt} now=${now} ttlSeconds=${ttlSeconds}`);
+
+    try {
+      const pipeline = this.redis.pipeline();
+      pipeline.hset(key, {
+        id: room.id,
+        code: room.code,
+        createdAt: String(room.createdAt),
+        expiresAt: String(room.expiresAt),
+        passwordHash: room.passwordHash || '',
+        isOneTime: room.isOneTime ? '1' : '0',
+        hostDeviceId: room.hostDeviceId,
+      });
+      pipeline.expire(key, ttlSeconds);
+      pipeline.set(`code:${normalizedCode}`, room.id, 'EX', ttlSeconds);
+
+      const results = await pipeline.exec();
+      if (results) {
+        for (const [err] of results) {
+          if (err) {
+            console.error(`[RedisRoomStore] Pipeline error for room ${room.id}:`, err);
+            throw err;
+          }
+        }
+      }
+      console.log(`[RedisRoomStore] saveRoom SUCCESS for id="${room.id}", code="${room.code}"`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[RedisRoomStore] Failed to save room ${room.id} to Redis:`, msg);
+      throw err;
     }
   }
 
   async getRoomByCode(code: string): Promise<SerializedRoom | null> {
     try {
-      const normalizedCode = code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+      const normalizedCode = RoomManager.normalizeCode(code);
       const rawUpper = code.trim().toUpperCase();
 
       let roomId = await this.redis.get(`code:${normalizedCode}`);
-      if (!roomId) {
+      if (!roomId && rawUpper !== normalizedCode) {
         roomId = await this.redis.get(`code:${rawUpper}`);
       }
-      if (!roomId) return null;
+      if (!roomId) {
+        console.log(`[RedisRoomStore] getRoomByCode: no roomId mapping found for code "${code}" (key: code:${normalizedCode})`);
+        return null;
+      }
 
+      console.log(`[RedisRoomStore] getRoomByCode: resolved code "${code}" -> roomId "${roomId}"`);
       return await this.getRoomById(roomId);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -112,7 +137,10 @@ export class RedisRoomStore implements IRoomPersistenceStore {
   async getRoomById(roomId: string): Promise<SerializedRoom | null> {
     try {
       const data = await this.redis.hgetall(`room:${roomId}`);
-      if (!data || !data.id) return null;
+      if (!data || !data.id) {
+        console.log(`[RedisRoomStore] getRoomById: key room:${roomId} not found or empty`);
+        return null;
+      }
 
       const room: SerializedRoom = {
         id: data.id,
@@ -124,7 +152,8 @@ export class RedisRoomStore implements IRoomPersistenceStore {
         hostDeviceId: data.hostDeviceId,
       };
 
-      if (Date.now() > room.expiresAt) {
+      if (isNaN(room.expiresAt) || Date.now() > room.expiresAt) {
+        console.log(`[RedisRoomStore] getRoomById: room ${roomId} expired (expiresAt: ${room.expiresAt}, now: ${Date.now()})`);
         await this.deleteRoom(roomId, room.code);
         return null;
       }
@@ -141,10 +170,11 @@ export class RedisRoomStore implements IRoomPersistenceStore {
     try {
       const keys = [`room:${roomId}`];
       if (code) {
+        keys.push(`code:${RoomManager.normalizeCode(code)}`);
         keys.push(`code:${code.toUpperCase()}`);
-        keys.push(`code:${code.replace(/[^A-Z0-9]/gi, '').toUpperCase()}`);
       }
       await this.redis.del(...keys);
+      console.log(`[RedisRoomStore] deleteRoom: deleted keys ${JSON.stringify(keys)}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[RedisRoomStore] Failed to delete room ${roomId} from Redis:`, msg);
@@ -168,4 +198,3 @@ export class RedisRoomStore implements IRoomPersistenceStore {
     }
   }
 }
-
