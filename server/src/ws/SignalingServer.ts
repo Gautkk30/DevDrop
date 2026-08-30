@@ -19,7 +19,10 @@ export class SignalingServer {
       ws.on('message', (data: RawData) => {
         try {
           const message: SignalingMessage = JSON.parse(data.toString());
-          this.handleMessage(ws, message);
+          this.handleMessage(ws, message).catch((err: unknown) => {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            console.error('[SignalingServer] Async handler error:', errorMsg);
+          });
         } catch (err: unknown) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           this.sendError(ws, 'INVALID_JSON', 'Failed to parse signaling message: ' + errorMsg);
@@ -38,7 +41,7 @@ export class SignalingServer {
     });
   }
 
-  private handleMessage(ws: WebSocket, msg: SignalingMessage) {
+  private async handleMessage(ws: WebSocket, msg: SignalingMessage) {
     switch (msg.type) {
       case 'PING':
         ws.send(JSON.stringify({ type: 'PONG' }));
@@ -49,6 +52,8 @@ export class SignalingServer {
         if (!roomCode) {
           return this.sendError(ws, 'BAD_REQUEST', 'Missing room code');
         }
+        // Try in-memory first, then Redis fallback
+        await this.roomManager.findOrRehydrateRoom(roomCode);
         const room = this.roomManager.getRoomByCode(roomCode);
         if (!room) {
           ws.send(JSON.stringify({
@@ -114,6 +119,9 @@ export class SignalingServer {
         }
 
         console.log(`[PROD DEBUG] ROOM_JOIN pid=${process.pid} host=${os.hostname()} instance=${this.roomManager.getInstanceId()} code=${roomCode} device=${device.id} activeRooms=${this.roomManager.getRoomCount()}`);
+
+        // Try in-memory first, then Redis fallback (rehydrates room into in-memory store)
+        await this.roomManager.findOrRehydrateRoom(roomCode);
 
         try {
           const { room, peers } = this.roomManager.joinRoom(roomCode, device, ws, password);

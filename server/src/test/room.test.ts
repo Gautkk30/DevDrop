@@ -115,6 +115,42 @@ function runTests() {
   console.assert(fullRoom?.peers.size === 6, `Expected 6 peers in room8, got ${fullRoom?.peers.size}`);
   console.log('✓ TEST 8 Passed: Multiple concurrent join attempts do not corrupt room state');
 
+  // TEST 9: Persistent store rehydration test
+  const mockStore: any = {
+    store: new Map<string, any>(),
+    async saveRoom(r: any) { this.store.set(r.id, r); },
+    async getRoomByCode(c: string) {
+      for (const r of this.store.values()) {
+        if (r.code.replace(/[^A-Z0-9]/gi, '').toUpperCase() === c.replace(/[^A-Z0-9]/gi, '').toUpperCase()) return r;
+      }
+      return null;
+    },
+    async getRoomById(id: string) { return this.store.get(id) || null; },
+    async deleteRoom(id: string) { this.store.delete(id); },
+    isConnected() { return true; },
+  };
+
+  const freshManager = new RoomManager();
+  freshManager.setRedisStore(mockStore);
+  const { room: createdPersistRoom } = freshManager.createRoom({
+    hostDevice: { id: 'dev_persist_host', name: 'Host Persist', type: 'desktop', joinedAt: Date.now() },
+    ws: mockWs1,
+  });
+
+  // Create a brand new independent RoomManager instance (representing a fresh server process)
+  const restartedManager = new RoomManager();
+  restartedManager.setRedisStore(mockStore);
+  console.assert(restartedManager.getRoomCount() === 0, 'Fresh RoomManager must start with 0 in-memory rooms');
+
+  restartedManager.findOrRehydrateRoom(createdPersistRoom.code).then((rehydrated) => {
+    console.assert(rehydrated !== undefined, 'Room must be successfully rehydrated from persistent store');
+    console.assert(rehydrated?.id === createdPersistRoom.id, 'Rehydrated room ID must match original');
+    console.assert(restartedManager.getRoomCount() === 1, 'Restarted RoomManager must now have 1 room');
+    console.log('✓ TEST 9 Passed: Room rehydrates from persistent store into a fresh process');
+    freshManager.destroy();
+    restartedManager.destroy();
+  });
+
   // TEST 7: Room actually expires after TTL and is removed
   setTimeout(() => {
     const expiredRoom = manager.getRoomByCode(room.code);

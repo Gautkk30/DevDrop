@@ -200,6 +200,15 @@ export function App() {
         setPeers(msg.payload.peers || [msg.payload.device]);
         setIsCreateOpen(false);
         addToast('Room Ready', `Created room ${msg.payload.room.code}`, 'success');
+
+        signalingClient.setAutoRejoin({
+          protocolVersion: 1,
+          type: 'ROOM_JOIN',
+          payload: {
+            roomCode: msg.payload.room.code,
+            device: msg.payload.device,
+          },
+        });
       }
     });
 
@@ -210,6 +219,15 @@ export function App() {
         setPeers(msg.payload.peers || []);
         setIsJoinOpen(false);
         addToast('Joined Room', `Connected to room ${msg.payload.room.code}`, 'success');
+
+        signalingClient.setAutoRejoin({
+          protocolVersion: 1,
+          type: 'ROOM_JOIN',
+          payload: {
+            roomCode: msg.payload.room.code,
+            device: msg.payload.device,
+          },
+        });
       }
     });
 
@@ -295,10 +313,14 @@ export function App() {
     const unsubRoomError = signalingClient.on('ROOM_ERROR', (msg) => {
       if (msg.error) {
         addToast('Room Error', msg.error, 'error');
+        if (msg.error.toLowerCase().includes('not found') || msg.error.toLowerCase().includes('expired')) {
+          signalingClient.setAutoRejoin(null);
+        }
       }
     });
 
     const unsubExpired = signalingClient.on('ROOM_EXPIRED', () => {
+      signalingClient.setAutoRejoin(null);
       setRoom(null);
       setPeers([]);
       setErrorRecovery({
@@ -508,6 +530,7 @@ export function App() {
   };
 
   const handleCreateRoom = async (options: { deviceName: string; deviceType: any; platformDescription?: string; password?: string; isOneTime: boolean }) => {
+    signalingClient.setAutoRejoin(null);
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
     try {
       if (!signalingClient.isConnected()) {
@@ -547,6 +570,7 @@ export function App() {
   };
 
   const handleJoinRoom = async (options: { roomCode: string; deviceName: string; deviceType: any; platformDescription?: string; password?: string }) => {
+    signalingClient.setAutoRejoin(null);
     const deviceId = 'dev_' + Math.random().toString(36).substring(2, 9);
     try {
       if (!signalingClient.isConnected()) {
@@ -637,6 +661,7 @@ export function App() {
   };
 
   const handleCloseSessionAndCleanup = () => {
+    signalingClient.setAutoRejoin(null);
     setRoom(null);
     setPeers([]);
     setFileQueue([]);

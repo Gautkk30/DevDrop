@@ -18,8 +18,9 @@ export function createHealthRouter(roomManager: RoomManager) {
     });
   });
 
-  router.get('/api/room/validate/:code', (req, res) => {
+  router.get('/api/room/validate/:code', async (req, res) => {
     const code = req.params.code;
+    await roomManager.findOrRehydrateRoom(code);
     const room = roomManager.getRoomByCode(code);
 
     if (!room) {

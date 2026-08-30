@@ -11,6 +11,8 @@ export class SignalingClient {
   private outgoingQueue: SignalingMessage[] = [];
   private isExplicitlyDisconnected = false;
   private signalingUrl: string;
+  private rejoinMessage: SignalingMessage | null = null;
+  private hasEverConnected = false;
 
   constructor(url?: string) {
     if (url) {
@@ -55,7 +57,21 @@ export class SignalingClient {
         ws.onopen = () => {
           console.log('[SignalingClient] WebSocket OPEN:', this.signalingUrl);
           this.startHeartbeat();
+
+          // Auto-rejoin room after unexpected reconnect (e.g. Render process restart)
+          if (this.hasEverConnected && this.rejoinMessage) {
+            const hasPendingRoomAction = this.outgoingQueue.some(
+              (m) => m.type === 'ROOM_CREATE' || m.type === 'ROOM_JOIN'
+            );
+            if (!hasPendingRoomAction) {
+              console.log('[SignalingClient] Auto-rejoining room after reconnect...');
+              this.enqueueMessage(this.rejoinMessage);
+            }
+          }
+          this.hasEverConnected = true;
+
           this.flushOutgoingQueue();
+
           if (!isResolvedOrRejected) {
             isResolvedOrRejected = true;
             this.connectPromise = null;
@@ -132,6 +148,15 @@ export class SignalingClient {
     if (prevCount !== this.outgoingQueue.length) {
       console.log('[SignalingClient] Cleared pending room requests from queue.');
     }
+  }
+
+  /**
+   * Set a ROOM_JOIN message to be automatically sent after WebSocket reconnection.
+   * This allows Device A to re-register in its room after a Render process restart
+   * kills the WebSocket but doesn't destroy the Redis-persisted room.
+   */
+  public setAutoRejoin(message: SignalingMessage | null): void {
+    this.rejoinMessage = message;
   }
 
   /**
@@ -332,6 +357,7 @@ export class SignalingClient {
     this.isExplicitlyDisconnected = true;
     this.outgoingQueue = [];
     this.connectPromise = null;
+    this.rejoinMessage = null;
     this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
