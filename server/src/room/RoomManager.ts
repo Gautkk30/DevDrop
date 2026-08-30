@@ -96,7 +96,7 @@ export class RoomManager {
     console.log(`[ROOM DEBUG] CREATED instance=${this.instanceId} room=${roomId} code=${code}`);
     console.log(`[ROOM DEBUG] ACTIVE_ROOMS instance=${this.instanceId} count=${this.rooms.size}`);
 
-    // Await Redis persistence so room is guaranteed stored BEFORE ROOM_CREATED is sent to client
+    // Await Redis persistence and verify it before confirming creation
     if (this.redisStore) {
       try {
         await this.redisStore.saveRoom({
@@ -108,11 +108,19 @@ export class RoomManager {
           isOneTime: !!options.isOneTime,
           hostDeviceId: options.hostDevice.id,
         });
-        console.log(`[ROOM DEBUG] Room ${roomId} (code: ${code}) persisted to Redis successfully`);
+        console.log(`[ROOM DEBUG] Room ${roomId} (code: ${code}) persisted and verified in Redis`);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error(`[ROOM ERROR] [${this.instanceId}] Redis persistence failed for room ${roomId} (code: ${code}):`, errMsg);
-        // Do not fail local creation if Redis is unreachable, but log prominently
+
+        // Clean up in-memory state since persistence failed
+        this.rooms.delete(roomId);
+        this.codeToRoomId.delete(rawCodeUpper);
+        this.codeToRoomId.delete(normalizedCode);
+        this.codeToRoomId.delete(roomId);
+        this.deviceToRoomId.delete(options.hostDevice.id);
+
+        throw new Error(`Persistence failed: ${errMsg}`);
       }
     }
 

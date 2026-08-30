@@ -67,8 +67,9 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
       val += '-';
     }
     setRoomCode(val);
-    if (val.length >= 6) {
-      checkRoomMetadata(val);
+    const clean = val.replace(/[^A-Z0-9]/g, '');
+    if (clean.length === 6) {
+      checkRoomMetadata(clean);
     }
   };
 

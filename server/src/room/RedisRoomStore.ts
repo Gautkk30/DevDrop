@@ -73,26 +73,22 @@ export class RedisRoomStore implements IRoomPersistenceStore {
   }
 
   async saveRoom(room: SerializedRoom): Promise<void> {
-    const key = `room:${room.id}`;
+    const roomKey = `room:${room.id}`;
+    const normalizedCode = RoomManager.normalizeCode(room.code);
+    const codeKey = `code:${normalizedCode}`;
     const now = Date.now();
     const ttlSeconds = Math.max(1, Math.ceil((room.expiresAt - now) / 1000));
-    const normalizedCode = RoomManager.normalizeCode(room.code);
 
-    console.log(`[RedisRoomStore] saveRoom START: id="${room.id}" code="${room.code}" normalized="${normalizedCode}" expiresAt=${room.expiresAt} now=${now} ttlSeconds=${ttlSeconds}`);
+    console.log(`[RedisRoomStore] SAVE_START room=${room.id} code=${room.code} normalized=${normalizedCode}`);
+    console.log(`[RedisRoomStore] SAVE_KEY ${roomKey}`);
+    console.log(`[RedisRoomStore] SAVE_KEY ${codeKey}`);
+    console.log(`[RedisRoomStore] SAVE_DETAILS expiresAt=${room.expiresAt} now=${now} ttlSeconds=${ttlSeconds}`);
 
     try {
+      const roomJson = JSON.stringify(room);
       const pipeline = this.redis.pipeline();
-      pipeline.hset(key, {
-        id: room.id,
-        code: room.code,
-        createdAt: String(room.createdAt),
-        expiresAt: String(room.expiresAt),
-        passwordHash: room.passwordHash || '',
-        isOneTime: room.isOneTime ? '1' : '0',
-        hostDeviceId: room.hostDeviceId,
-      });
-      pipeline.expire(key, ttlSeconds);
-      pipeline.set(`code:${normalizedCode}`, room.id, 'EX', ttlSeconds);
+      pipeline.set(roomKey, roomJson, 'EX', ttlSeconds);
+      pipeline.set(codeKey, room.id, 'EX', ttlSeconds);
 
       const results = await pipeline.exec();
       if (results) {
@@ -103,10 +99,26 @@ export class RedisRoomStore implements IRoomPersistenceStore {
           }
         }
       }
-      console.log(`[RedisRoomStore] saveRoom SUCCESS for id="${room.id}", code="${room.code}"`);
+
+      console.log(`[RedisRoomStore] SAVE_SUCCESS room=${room.id} code=${normalizedCode}`);
+
+      // Verify keys actually exist in Redis immediately after write
+      const [roomKeyExists, savedRoomId] = await Promise.all([
+        this.redis.exists(roomKey),
+        this.redis.get(codeKey),
+      ]);
+
+      const isRoomOk = roomKeyExists === 1;
+      const isCodeOk = savedRoomId === room.id;
+
+      console.log(`[RedisRoomStore] SAVE_VERIFY roomKeyExists=${isRoomOk} codeKeyExists=${isCodeOk}`);
+
+      if (!isRoomOk || !isCodeOk) {
+        throw new Error(`Persistence verification failed for room ${room.id} (roomKeyExists=${isRoomOk}, codeKeyExists=${isCodeOk})`);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[RedisRoomStore] Failed to save room ${room.id} to Redis:`, msg);
+      console.error(`[RedisRoomStore] SAVE_FAILED room=${room.id} error=${msg}`);
       throw err;
     }
   }
@@ -114,14 +126,19 @@ export class RedisRoomStore implements IRoomPersistenceStore {
   async getRoomByCode(code: string): Promise<SerializedRoom | null> {
     try {
       const normalizedCode = RoomManager.normalizeCode(code);
-      const rawUpper = code.trim().toUpperCase();
+      const codeKey = `code:${normalizedCode}`;
+      console.log(`[RedisRoomStore] getRoomByCode: looking up key "${codeKey}" for code "${code}"`);
 
-      let roomId = await this.redis.get(`code:${normalizedCode}`);
-      if (!roomId && rawUpper !== normalizedCode) {
-        roomId = await this.redis.get(`code:${rawUpper}`);
-      }
+      let roomId = await this.redis.get(codeKey);
       if (!roomId) {
-        console.log(`[RedisRoomStore] getRoomByCode: no roomId mapping found for code "${code}" (key: code:${normalizedCode})`);
+        const rawUpper = code.trim().toUpperCase();
+        if (rawUpper !== normalizedCode) {
+          roomId = await this.redis.get(`code:${rawUpper}`);
+        }
+      }
+
+      if (!roomId) {
+        console.log(`[RedisRoomStore] getRoomByCode: no roomId mapping found for code "${normalizedCode}" (key: ${codeKey})`);
         return null;
       }
 
@@ -136,21 +153,22 @@ export class RedisRoomStore implements IRoomPersistenceStore {
 
   async getRoomById(roomId: string): Promise<SerializedRoom | null> {
     try {
-      const data = await this.redis.hgetall(`room:${roomId}`);
-      if (!data || !data.id) {
-        console.log(`[RedisRoomStore] getRoomById: key room:${roomId} not found or empty`);
+      const roomKey = `room:${roomId}`;
+      console.log(`[RedisRoomStore] getRoomById: looking up key "${roomKey}"`);
+
+      const data = await this.redis.get(roomKey);
+      if (!data) {
+        console.log(`[RedisRoomStore] getRoomById: key ${roomKey} not found or empty`);
         return null;
       }
 
-      const room: SerializedRoom = {
-        id: data.id,
-        code: data.code,
-        createdAt: parseInt(data.createdAt, 10),
-        expiresAt: parseInt(data.expiresAt, 10),
-        passwordHash: data.passwordHash || '',
-        isOneTime: data.isOneTime === '1',
-        hostDeviceId: data.hostDeviceId,
-      };
+      let room: SerializedRoom;
+      try {
+        room = JSON.parse(data);
+      } catch (err) {
+        console.error(`[RedisRoomStore] getRoomById: failed to parse JSON for ${roomKey}:`, err);
+        return null;
+      }
 
       if (isNaN(room.expiresAt) || Date.now() > room.expiresAt) {
         console.log(`[RedisRoomStore] getRoomById: room ${roomId} expired (expiresAt: ${room.expiresAt}, now: ${Date.now()})`);

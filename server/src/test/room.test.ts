@@ -227,17 +227,23 @@ async function runTests() {
   console.assert(rehydratedF === undefined, 'TEST F: Expired room must NOT rehydrate');
   console.log('✓ TEST F Passed: Expired Redis room cannot be joined');
 
-  // TEST G: Redis write failure is handled gracefully without crashing
+  // TEST G: Redis write failure is handled gracefully with clear error rejection and rollback
   const failingStore = new MockTestStore();
   failingStore.shouldFailSave = true;
   const failingManager = new RoomManager();
   failingManager.setRedisStore(failingStore);
-  const { room: fallbackRoom } = await failingManager.createRoom({
-    hostDevice: { id: 'dev_fallback_host', name: 'Fallback Host', type: 'desktop', joinedAt: Date.now() },
-    ws: mockWs1,
-  });
-  console.assert(failingManager.getRoomByCode(fallbackRoom.code) !== undefined, 'TEST G: In-memory room still available on Redis save failure');
-  console.log('✓ TEST G Passed: Redis failure produces clear error and does not crash process');
+  let caughtError: Error | null = null;
+  try {
+    await failingManager.createRoom({
+      hostDevice: { id: 'dev_fallback_host', name: 'Fallback Host', type: 'desktop', joinedAt: Date.now() },
+      ws: mockWs1,
+    });
+  } catch (err: any) {
+    caughtError = err;
+  }
+  console.assert(caughtError !== null, 'TEST G: createRoom must reject if Redis persistence fails');
+  console.assert(failingManager.getRoomCount() === 0, 'TEST G: In-memory room must be rolled back on persistence failure');
+  console.log('✓ TEST G Passed: Redis failure produces clear error and rolls back in-memory state');
 
   // TEST 7: Room actually expires after TTL and is removed
   setTimeout(() => {
